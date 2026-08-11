@@ -123,8 +123,9 @@ need a refresh; host/server changes may require restart. Keep test metadata
 aligned with `addon.json`, and run relevant host addon compatibility tests when
 the manifest or facade use changes.
 
-Development happens on `main`. Do not create branches, commits, releases, or
-pushes unless the maintainer asks. The only durable suite backlog is
+Development happens on `main`. The global Codex instructions govern task
+commits. Do not create branches, releases, or pushes unless the maintainer
+asks. The only durable suite backlog is
 [`../ttrpg-codex/docs/BACKLOG.md`](../ttrpg-codex/docs/BACKLOG.md). Temporary
 implementation plans belong only in the host repository's ignored
 `docs/plans/` directory and must be deleted when the task closes. Do not create
