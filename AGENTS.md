@@ -48,11 +48,14 @@ npm run package
 ```
 
 Use the host inspector on the produced ZIP when manifest, contract, or package
-layout changes. Dev-install from the host only for supervised integration:
+layout changes:
 
 ```powershell
-node scripts/dev-install-addon.cjs ../addon-dnd-character-sheets
+go run ./cmd/codex-addon-inspect ../addon-dnd-character-sheets/dist/dnd-sheets-3.0.0.zip
 ```
+
+Integration uses the staged-package review and activation lifecycle. Source
+checkout edits never become a runtime generation directly.
 
 Create logical commits after validation. Never push, deploy, or convert live
 campaign data without explicit instruction.
