@@ -62,11 +62,11 @@ npm run package
 ```
 
 `npm run package` produces a deterministic release archive under `dist/` with
-SHA-256 checksums. From the host repository, install the current source for a
-later supervised browser test:
+SHA-256 checksums. Inspect it from the host repository before the supervised
+browser test:
 
 ```powershell
-node scripts/dev-install-addon.cjs ../addon-dnd-character-sheets
+go run ./cmd/codex-addon-inspect ../addon-dnd-character-sheets/dist/dnd-sheets-3.0.0.zip
 ```
 
 Deployment and campaign conversion are intentionally performed later with the
