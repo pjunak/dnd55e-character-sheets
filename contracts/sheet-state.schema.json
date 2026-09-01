@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "D&D character sheet state",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["v"],
+  "properties": {
+    "v": { "type": "integer", "minimum": 1, "maximum": 3 },
+    "ruleset": { "type": "string", "maxLength": 100 },
+    "rulesMode": { "enum": ["auto", "manual"] },
+    "rulesProvider": { "type": ["object", "null"] },
+    "player": { "type": "string", "maxLength": 300 },
+    "className": { "type": "string", "maxLength": 300 },
+    "subclass": { "type": "string", "maxLength": 300 },
+    "race": { "type": "string", "maxLength": 300 },
+    "species": { "type": "string", "maxLength": 300 },
+    "background": { "type": "string", "maxLength": 300 },
+    "alignment": { "type": "string", "maxLength": 100 },
+    "level": { "type": "integer", "minimum": 1, "maximum": 100 },
+    "abilities": { "$ref": "#/$defs/abilityNumbers" },
+    "baseStats": { "oneOf": [{ "$ref": "#/$defs/abilityNumbers" }, { "type": "null" }] },
+    "maxHp": { "type": "number", "minimum": 0 },
+    "hp": { "type": "number", "minimum": 0 },
+    "tempHp": { "type": "number", "minimum": 0 },
+    "ac": { "type": "number" },
+    "initiative": { "type": "number" },
+    "speed": { "type": "number", "minimum": 0 },
+    "profBonus": { "type": "number" },
+    "saveProf": { "$ref": "#/$defs/booleanMap" },
+    "manualSaveProf": { "$ref": "#/$defs/booleanMap" },
+    "skillProf": { "$ref": "#/$defs/booleanMap" },
+    "skillExpertise": { "$ref": "#/$defs/booleanMap" },
+    "spells": { "type": "array", "maxItems": 5000, "items": { "type": "object" } },
+    "preparedSpells": { "$ref": "#/$defs/stringArrayMap" },
+    "spellbook": { "$ref": "#/$defs/stringArrayMap" },
+    "spellSwaps": { "type": "array", "maxItems": 1000, "items": { "type": "object" } },
+    "cantrips": { "$ref": "#/$defs/stringArrayMap" },
+    "grantChoices": { "$ref": "#/$defs/stringArrayMap" },
+    "grantCastingAbilities": { "type": "object" },
+    "inventory": { "type": "array", "maxItems": 5000, "items": { "type": "object" } },
+    "resources": { "type": "array", "maxItems": 1000, "items": { "type": "object" } },
+    "resourceUses": { "type": "object" },
+    "activeFeatures": { "$ref": "#/$defs/booleanMap" },
+    "traitSnapshot": { "type": "object" },
+    "currency": { "type": "object" },
+    "overrides": { "type": "object" },
+    "manualScores": { "type": "boolean" },
+    "classes": { "type": "array", "maxItems": 20, "items": { "type": "object" } },
+    "lineage": { "type": "string", "maxLength": 300 },
+    "abilityGrants": { "type": "array", "maxItems": 500, "items": { "type": "object" } },
+    "featureChoices": { "type": "object" },
+    "feats": { "type": "array", "maxItems": 500 },
+    "extraFeats": { "type": "array", "maxItems": 500, "items": { "type": "object" } },
+    "notes": { "type": "string", "maxLength": 200000 }
+  },
+  "$defs": {
+    "abilityNumbers": {
+      "type": "object",
+      "properties": {
+        "STR": { "type": "number" }, "DEX": { "type": "number" },
+        "CON": { "type": "number" }, "INT": { "type": "number" },
+        "WIS": { "type": "number" }, "CHA": { "type": "number" }
+      },
+      "additionalProperties": false
+    },
+    "booleanMap": { "type": "object", "additionalProperties": { "type": "boolean" } },
+    "stringArrayMap": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "array", "maxItems": 5000, "items": { "type": "string", "maxLength": 500 }
+      }
+    }
+  }
+}

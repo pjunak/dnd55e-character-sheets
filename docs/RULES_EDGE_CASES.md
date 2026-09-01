@@ -1,108 +1,60 @@
-# Sheet rules and renderer integration contract
+# Sheet and rules-engine boundary
 
-This document defines the boundaries owned by `dnd-sheets`. Rules derivation
-semantics belong to the selected engine addon; rules record semantics belong to
-the selected rules-data provider.
+This document defines behavior owned by `dnd-sheets`. D&D computation belongs
+to `dnd5e.rules-engine` v3; rulebook records belong to the selected
+`dnd5e.rules-data` provider.
 
-## Stable ownership
+## Standalone is the baseline
 
-- The addon id is `dnd-sheets`. It is also the permanent key at
-  `character.addonData["dnd-sheets"]`; changing it requires an explicit data-key
-  migration.
-- The host owns character identity, portrait, lore, relationships, routing,
-  authorization, persistence, and addon lifecycle.
-- This addon owns the sheet decision blob, durable hand-filled/materialized
-  fields, sheet tabs and actions, renderer selection UI, and renderer contract.
-- This repository contains no rules engine and no rulebook records.
+The engine consumer is optional. With no provider, a stale binding, missing
+rules data, a service error, or a disabled add-on, every ordinary sheet field
+continues to load and save. The Builder reports why it is unavailable without
+blocking the rest of the section.
 
-## Rules-engine discovery
+The sheet never branches on engine or compendium add-on IDs. Provider identity
+is diagnostic and reconciliation data, not runtime feature selection.
 
-The manifest consumes optional cardinality-one `dnd5e.rules-engine` v2 through
-`host.useService()`. It never names an engine or data-provider addon. The host
-selects among compatible engine providers; the engine independently selects a
-compatible rules-data service.
+## Builder writes are atomic from the user's perspective
 
-An engine is active only when its API is compatible and `getAvailability()`
-reports available rules data. Otherwise the sheet remains fully hand-fillable,
-the Builder is hidden, and the last materialized flat values remain usable.
+A structural or choice edit follows one path:
 
-The sheet delegates ruleset-dependent calculations and Builder semantics to
-the engine API. `getBuilderPlan()` supplies normalized classes, base scores,
-point buy, creation grants, class choices, advancement levels, feat categories,
-and caps. `applyBuilderChoice()` validates mutations, and
-`reconcileBuilderDecisions()` prunes decisions invalidated by structural
-changes. Panels and actions must not recreate those policies, spell-copy
-costs, hit-die averages, edition constants, or sourcebook-specific branches.
-Presentation vocabulary and manual-mode arithmetic may remain local.
+1. send the current decisions to the engine;
+2. apply or reconcile the requested change;
+3. hydrate the returned decisions;
+4. materialize computed results into ordinary fallback fields;
+5. save the new decisions and fallback values in one revisioned extension
+   write.
 
-Provider-owned record links are resolved through
-`engine.resolveReference(kind, id, mode)`. The sheet must render plain text when
-the provider supplies no safe route; it must never synthesize a named
-compendium route.
+If any service call fails, nothing is persisted. If the stored extension
+revision changed, the package reloads the newest state and asks the user to
+repeat the edit. It never silently overwrites concurrent play changes.
 
-## Stored decisions and reconciliation
+## Durable fallback and authored play state
 
-The decision spine includes classes, base scores, grants, feature and spell
-choices, manual proficiencies, equipment state, and overrides. Successful
-hydration is copied into ordinary fallback fields so removing services never
-turns a character blank or unreadable.
+Materialization may refresh class display, level, abilities, maximum HP, armor
+class, initiative, speed, proficiency bonus, save/skill proficiency, expertise,
+trait snapshots, and engine-derived spell snapshots. It preserves current HP
+within the new maximum, temporary HP, manually entered spells, inventory,
+currency, resources, and notes.
 
-Each materialization stores a bounded snapshot plus the full computation
-identity: engine addon/version/contract, rules-data addon/version/contract,
-content revision, ruleset id/version, and edition. Recalculation pauses for that
-character when:
+The materialization marker stores both engine binding identity and rules-data
+identity. The package does not automatically recompute merely because a page
+rendered or a provider changed. A user explicitly loads the Builder or requests
+a refresh, keeping changes reviewable.
 
-- a materialized field was changed manually;
-- the edition changed; or
-- any other engine/data/ruleset/content identity component changed.
+## Legacy campaign data
 
-The user must explicitly keep the current values in manual mode or resume the
-Builder and rematerialize. Current HP, inventory, currency, resource uses, and
-other play state do not trigger reconciliation. The choice is per character.
+There is no permanent legacy-save subsystem. During supervised cutover, the
+host's one-time converter copies each old
+`character.addonData["dnd-sheets"]` value into the v3 record extension with the
+same ID. The schema and normalizer accept older sparse blobs and preserve
+unknown safe JSON fields. The separately downloaded campaign backups remain
+the rollback source until both conversions are verified.
 
-Legacy edition-only snapshots are safe but intentionally reconcile once when a
-full service identity becomes available.
+## Presentation
 
-## Renderer discovery and selection
-
-The manifest consumes optional cardinality-many `dnd-sheets.renderer` v2
-through `host.listServices()`. A provider is accepted by contract and schema,
-not by addon id, when it:
-
-- exposes `apiVersion: 2`, `descriptor()`, and `render(payload)`;
-- declares `sheetSchemaVersion: 1` and a safe renderer id; and
-- has explicit `ui:override` and `data:read:characters` grants, because the
-  sheet delegates HTML production and a bounded character snapshot.
-
-The effective renderer identity is `<provider-addon-id>:<renderer-id>`. Built-in
-styles use the same registry with identities `builtin:compact` and
-`builtin:classic`; Compact is the default.
-
-Preference is stored in local browser storage per character. It is not campaign
-data, so two players or browsers may choose different styles for the same
-entity. Legacy Classic/Compact layout keys migrate on read. If a preferred
-renderer is missing, invalid, throws, or returns an invalid result, the sheet
-uses Compact without deleting the preference. It resumes automatically when
-the provider returns.
-
-A descriptor may restrict itself declaratively by class IDs, subclass IDs,
-editions, and ruleset IDs. The registry evaluates those fields from the current
-character and selected engine context. Inapplicable providers are omitted from
-that character's selector; a previously selected provider falls back exactly
-like a missing one. The sheet contains no class/subclass or provider whitelist.
-
-The Settings tab and selector remain sheet-owned so a renderer cannot hide the
-mechanism used to leave it. Renderer input is cloned/frozen, excludes other
-addons' `addonData`, and includes only the bounded character identity, this
-sheet's blob, computed sheet result, warnings, editability, surface, and default
-HTML. Renderer output is failure-isolated and size-bounded.
-
-## Verification
-
-- `tests/provider-state.mjs` covers full-identity and manual reconciliation.
-- `tests/renderer-registry.mjs` covers whitelist-free discovery, per-character
-  and per-browser preferences, privilege checks, and safe fallback.
-- `tests/smoke.mjs` covers integration against the real extracted engine with a
-  synthetic rules-data provider.
-- Engine mechanics and provider-schema integrity are tested in their owning
-  repositories.
+The package owns one scoped built-in presentation. The v2
+`dnd-sheets.renderer` service was removed because it exchanged live browser
+objects and HTML rather than a serializable, schema-validated contract. This
+reduces authority, lifecycle coupling, and failure modes without affecting
+saved campaign data.

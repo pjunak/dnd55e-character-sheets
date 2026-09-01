@@ -1,0 +1,55 @@
+.addon-dnd-sheets {
+  display: block;
+  color: var(--text, #e8e3da);
+  font: inherit;
+}
+
+.addon-dnd-sheets *, .addon-dnd-sheets *::before, .addon-dnd-sheets *::after { box-sizing: border-box; }
+.dnd-sheet-shell { display: grid; gap: 1rem; }
+.dnd-sheet-heading { display: flex; align-items: start; justify-content: space-between; gap: 1rem; }
+.dnd-sheet-heading h2, .dnd-sheet-card h3, .dnd-sheet-card h4 { margin: 0; }
+.dnd-sheet-heading p { margin: .3rem 0 0; color: var(--text-muted, #aaa39a); }
+.dnd-sheet-engine { flex: none; border: 1px solid var(--border, #4b4741); border-radius: 999px; padding: .35rem .65rem; font-size: .85rem; }
+.dnd-sheet-engine.available { border-color: var(--success, #4c956c); }
+.dnd-sheet-engine.standalone { color: var(--text-muted, #aaa39a); }
+.dnd-sheet-tabs { display: flex; gap: .35rem; overflow-x: auto; border-bottom: 1px solid var(--border, #4b4741); padding-bottom: .45rem; }
+.dnd-sheet-tabs button { white-space: nowrap; background: transparent; border: 0; border-radius: .45rem; padding: .5rem .75rem; color: inherit; cursor: pointer; }
+.dnd-sheet-tabs button:hover, .dnd-sheet-tabs button.active { background: var(--surface-hover, rgba(255,255,255,.08)); }
+.dnd-sheet-tabs button.active { color: var(--accent, #d8b46c); font-weight: 700; }
+.dnd-sheet-panel { display: grid; gap: 1rem; }
+.dnd-sheet-card { display: grid; gap: .85rem; padding: 1rem; border: 1px solid var(--border, #4b4741); border-radius: .7rem; background: var(--surface, rgba(255,255,255,.025)); }
+.dnd-sheet-form-grid, .dnd-sheet-vitals, .dnd-sheet-currency { display: grid; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); gap: .75rem; }
+.dnd-sheet-field { display: grid; gap: .3rem; color: var(--text-muted, #aaa39a); font-size: .85rem; }
+.dnd-sheet-field input, .dnd-sheet-card textarea, .dnd-sheet-card select, .dnd-sheet-table input, .dnd-builder-class-row input, .dnd-builder-class-row select {
+  width: 100%; min-width: 0; border: 1px solid var(--border, #4b4741); border-radius: .4rem; padding: .5rem .55rem;
+  color: var(--text, #e8e3da); background: var(--input-bg, rgba(0,0,0,.18)); font: inherit;
+}
+.dnd-sheet-card button { justify-self: start; border: 1px solid var(--border, #4b4741); border-radius: .4rem; padding: .5rem .75rem; color: inherit; background: var(--surface-raised, rgba(255,255,255,.06)); cursor: pointer; }
+.dnd-sheet-card button.primary { border-color: var(--accent, #d8b46c); color: var(--accent, #d8b46c); }
+.dnd-sheet-card button.danger { color: var(--danger, #e68484); }
+.dnd-sheet-card button.small { padding: .2rem .4rem; font-size: .75rem; }
+.dnd-sheet-card button:disabled, .dnd-sheet-card input:disabled, .dnd-sheet-card select:disabled, .dnd-sheet-card textarea:disabled { opacity: .65; cursor: default; }
+.dnd-sheet-abilities { display: grid; grid-template-columns: repeat(6, minmax(4.75rem, 1fr)); gap: .5rem; }
+.dnd-sheet-abilities label { display: grid; place-items: center; gap: .3rem; border: 1px solid var(--border, #4b4741); border-radius: .6rem; padding: .6rem; }
+.dnd-sheet-abilities input { width: 4rem; text-align: center; }
+.dnd-sheet-abilities strong { font-size: 1.2rem; color: var(--accent, #d8b46c); }
+.dnd-sheet-proficiencies { display: grid; grid-template-columns: minmax(12rem, .7fr) minmax(18rem, 1.3fr); gap: 1rem; }
+.dnd-sheet-prof-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: .55rem; min-height: 2rem; border-bottom: 1px solid color-mix(in srgb, var(--border, #4b4741), transparent 50%); }
+.dnd-sheet-table { display: grid; gap: .45rem; }
+.dnd-sheet-row { display: grid; grid-template-columns: minmax(8rem, 2fr) repeat(3, minmax(5rem, 1fr)) auto; gap: .45rem; align-items: center; }
+.dnd-sheet-message { border-radius: .45rem; padding: .65rem .8rem; background: var(--surface-raised, rgba(255,255,255,.06)); }
+.dnd-sheet-message.alert { border: 1px solid var(--danger, #a95353); }
+.dnd-builder-classes, .dnd-builder-choices { display: grid; gap: .65rem; }
+.dnd-builder-class-row { display: grid; grid-template-columns: minmax(10rem, 1fr) 6rem auto; gap: .5rem; }
+.dnd-builder-choices fieldset { display: flex; flex-wrap: wrap; align-items: end; gap: .5rem; border: 1px solid var(--border, #4b4741); border-radius: .5rem; padding: .7rem; }
+.dnd-builder-choices legend { padding: 0 .35rem; }
+.dnd-sheet-computed { overflow: auto; max-height: 24rem; padding: .75rem; border-radius: .45rem; background: var(--input-bg, rgba(0,0,0,.2)); white-space: pre-wrap; }
+
+@media (max-width: 760px) {
+  .dnd-sheet-heading { display: grid; }
+  .dnd-sheet-engine { justify-self: start; }
+  .dnd-sheet-abilities { grid-template-columns: repeat(3, minmax(4.75rem, 1fr)); }
+  .dnd-sheet-proficiencies { grid-template-columns: 1fr; }
+  .dnd-sheet-row { grid-template-columns: 1fr 5rem; }
+  .dnd-sheet-row input:nth-child(n+3) { grid-column: auto; }
+}

@@ -1,0 +1,18 @@
+{
+  "name": "@ttrpg-codex/dnd-character-sheets",
+  "version": "3.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node tools/clean-web.ts && tsc -p tsconfig.json && node tools/copy-style.ts",
+    "package": "npm run build && node tools/package.ts",
+    "test": "node --test tests/*.mjs",
+    "check": "npm run build && npm test"
+  },
+  "devDependencies": {
+    "@types/archiver": "^7.0.0",
+    "@types/node": "^24.0.0",
+    "archiver": "^7.0.1",
+    "typescript": "^5.9.0"
+  }
+}

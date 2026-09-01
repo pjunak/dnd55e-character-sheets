@@ -1,157 +1,73 @@
-# dnd-sheets
+# D&D Character Sheets
 
-A **fully hand-fillable D&D character sheet** addon for
-[ttrpg-codex](https://github.com/pjunak/ttrpg-codex) (the *O Barvách Draků* CodexHost
-framework). Addon id: `dnd-sheets`.
+`dnd-sheets` is the hand-fillable D&D character sheet for TTRPG Codex. It is
+an Add-on API v3 integrated TypeScript package and adds a section beneath the
+host-owned character profile. The host continues to own identity, portrait,
+lore, relationships, routing, and authorization.
 
-The sheet stores its D&D data per character in `character.addonData['dnd-sheets']`
-— it does **not** own a collection, and it does **not** duplicate anything the host
-already owns (name, portrait, species, lore, relationships). It integrates by claiming
-the host's character `body` fragment (`registerFragmentOp` · replace), which makes the
-article full-width: the host folds its side-card and every relationship/event section
-into the body html this addon receives, and the addon shows that whole wiki profile as
-its first tab.
+## What it provides
 
-## What it does
+- Directly editable identity, abilities, saves, skills, vitals, resources,
+  spells, inventory, currency, and notes.
+- A useful read-only view for players without edit authority.
+- Versioned per-sheet JSON export and import.
+- An optional guided Builder through `dnd5e.rules-engine` v3.
+- Durable materialized values after every successful Builder change, so a
+  sheet remains useful when the engine or rules data is unavailable.
 
-The character's native page **is** the Overview tab: the host's side-card (with its
-✏ Upravit button), connections, facts and lore arrive folded into the body fragment,
-so the tab strip sits at the very top of the page (only the host's breadcrumb rides
-above it). The D&D tabs follow:
+The package does not implement D&D rules or carry rulebook data. Those belong
+to the selected rules engine and its selected rules-data provider. Missing or
+failing services never block ordinary hand editing.
 
-- **Overview** — the host's own wiki profile (side-card + sections + lore), reused as tab 1 (not copied).
-- **Character Sheet** — D&D identity (class/level/background/alignment), ability scores,
-  saving throws, skills, mechanical notes, and **inventory + currency** grouped by
-  carry location.
-- **Combat** — attacks from equipped/ready weapons, a castable-spells quick-reference,
-  and resource trackers (Rage, Ki, slots…) with the Rest wizard.
-- **Spellbook** — prepared/cantrip slots, granted & choose-grant sections; a Wizard prepares from a **learned
-  spellbook** (copy from a scroll for gp) and any class can **add a spell from another source** (feat/item/homebrew,
-  slot-castable for casters); level-up spell **swaps** are recorded with history.
-- **Builder** — a responsive **build-progress rail** links every unresolved
-  foundation, class, subclass, feat, proficiency, and granted-spell decision
-  to its editor. A **Character** tab owns creation choices; each class gets a
-  per-level progression spine whose rows expand in place.
-  Only with the rules engine and only for editors.
-- **Settings** — per-sheet tools, rightmost: a per-character, per-browser style
-  selector (Compact by default, Classic built in, compatible universal or
-  class/subclass-specific renderer addons discovered automatically), plus
-  **🖨 Print / PDF** (a self-contained printable sheet), **⬇ Export**
-  (download a versioned character JSON), and **⬆ Import** (file or paste,
-  bounded validation, preview, explicit confirmation, and immediate undo —
-  editors only).
+## Saved state
 
-A slim **vitals bar** (a directly-editable **HP** stepper, plus text-labelled AC,
-Initiative, Speed, Passive Perception and a class-level line — Proficiency has no
-tile, it's already folded into every formula) renders full-width under the tabs on
-Spellbook; Character Sheet and Combat place it inside their own right column.
+The add-on ID and record-extension ID are both permanently `dnd-sheets`. API v3
+stores the value at:
 
-**Editing is direct and role-gated — there is no separate "edit mode" and no second edit
-button.** The host's own **✏ Upravit** owns identity/lore/portrait (it rides the host
-side-card, which lands inside the Overview tab); editors
-(`!isAnonymous()`) change D&D stats directly in the tabs (and the Builder), while
-anonymous viewers get a clean read-only sheet. Live-play controls (HP, trackers,
-spell prep, proficiency toggles) follow the same gate.
+```text
+(characters, character ID, dnd-sheets, dnd-sheets)
+```
 
-Everything can be entered by hand. Rules computation is optional and belongs to
-a separate addon implementing `dnd5e.rules-engine`; rules records belong to a
-separate `dnd5e.rules-data` provider. The sheet has no hard dependency on either
-and remains usable when they are absent, disabled, or temporarily unavailable.
+This is the deliberate destination for the old
+`character.addonData["dnd-sheets"]` blob during the one-time campaign
+conversion. The v3 schema describes known fields but permits unknown fields so
+older and homebrew values survive that move. Runtime normalization preserves
+those values as well.
 
 ## Architecture
 
-`entry.js` is the composition root: it builds the model/UI context, composes the
-panels, registers the character-body fragment, discovers services, and collects
-domain disposers. Controller actions live in focused modules:
+- `src/index.ts` activates the generation, connects the optional service, and
+  binds the declared section.
+- `src/sheet-element.ts` owns presentation and browser interaction.
+- `src/sheet-state.ts` owns defaults, forward normalization, and manual math.
+- `src/sheet-repository.ts` owns revisioned record-extension persistence.
+- `src/engine-client.ts` is the only rules-engine service boundary.
+- `src/sheet-transfer.ts` owns bounded per-sheet JSON transfer.
+- `contracts/sheet-state.schema.json` is the durable storage contract.
 
-- `actions.base.js` — tabs, direct fields/proficiencies, overrides, renderer selection.
-- `actions.spells.js` — preparation, spellbooks, grants, swaps, drag/drop,
-  and spell management.
-- `actions.inventory.js` — inventory/equipment and the add-item wizard.
-- `actions.resources.js` — resources and rests.
-- `actions.builder.js` — guided Builder decisions.
-- `builder-progress.js` — pure completion model and navigation targets for the
-  Builder progress rail.
-- `actions.transfer.js` — print, JSON export, and import.
-- `ui-state.js` — isolated per-character session state, with persistence limited
-  to tab and renderer preferences.
-- `renderer-registry.js` — normalized built-in and third-party renderer discovery,
-  permission checks, selection, and failure fallback.
-- `equipment-model.js` — pure inventory resolution and equipment-slot
-  classification shared by the header and backpack.
-- `sheet-transfer.js` — versioned export envelope and bounded legacy-compatible
-  import validation.
-- `provider-state.js` — per-character materialized baseline and explicit
-  rulebook-return reconciliation.
-
-Panels remain render-only and `model.js` owns stored-sheet mutation,
-materialization, service-identity reconciliation, and thin calls into the
-engine's normalized Builder API. Builder rules implementation and rules data
-are intentionally absent from this repository.
-
-## Designed to grow
-
-- **Rules in harmony:** the sheet consumes one optional, host-selected
-  `dnd5e.rules-engine` service. That engine consumes a compatible rules-data
-  provider without the sheet naming either addon. When both are available the
-  engine auto-fills stats and unlocks the Builder; otherwise the sheet uses its
-  durable hand-filled/materialized fields. If computed flat values were edited while the provider was
-  unavailable, that character stays hand-filled until the user explicitly
-  keeps manual mode or resumes the rulebook; other characters are unaffected.
-  Supplement records can add fixed traits and proficiencies, runtime choices,
-  expanded spell lists, granted-spell casting abilities and upcast schedules,
-  resource pools, selected self-effect modes, and class-specific attunement
-  limits without book-specific code. The same generic contract handles nested
-  proficiency grants, senses, mutually exclusive modes, delegated subclass
-  spell lists, and printed armor restrictions. Disabling a compendium book group removes
-  those records from hydration; stored fallback fields cannot turn a removed
-  rule grant into a manual choice.
-- **Independent styles:** any addon can provide `dnd-sheets.renderer` v2. The
-  sheet lists compatible providers automatically; no repository change or
-  addon-id whitelist is required. Providers may be universal or declare class,
-  subclass, edition, and ruleset applicability. Renderer preference is local
-  to each browser and character, Compact is the safe fallback, and unavailable
-  or temporarily inapplicable preferences are retained.
-- **Localization:** all UI strings flow through the scoped `host.i18n` facade.
-  `addon.json` declares packaged JSON catalogs under `locales/`; English is the
-  source of truth and partial translations fall back per key through the host's
-  per-user locale rules. The current package ships English.
-
-## Upgrade from the built-in rules engine
-
-For an existing installation, update the host, install `dnd-engine`, install
-exactly one compatible rules-data addon, and then update `dnd-sheets`. This
-sheet release consumes only `dnd5e.rules-engine` v2 and never names the
-compendium or engine addon. The host rejects installing a second exclusive
-rules-data provider; switch revisions by uninstalling the installed provider
-before installing the replacement.
-
-If no compatible engine is selected, sheets remain hand-fillable and retain
-their stored/materialized values. Installing a compatible engine later enables
-the Builder without migrating the `dnd-sheets` character namespace.
+The former `dnd-sheets.renderer` browser-object service is intentionally not
+part of v3. Styles no longer receive character blobs or inject HTML across an
+add-on boundary. Presentation is package-owned and scoped; future alternate
+renderers should use a serializable host-selected renderer contract if there is
+a real second consumer.
 
 ## Develop
 
-No build step (browser ES modules). From a sibling checkout of the host:
+Use Node.js 26:
 
-```sh
-node scripts/dev-install-addon.cjs ../addon-dnd-character-sheets   # from the ttrpg-codex repo
+```powershell
+npm install
+npm run check
+npm run package
 ```
 
-Run the complete test suite (assume the host and `addon-dnd-engine` repos are
-sibling directories):
+`npm run package` produces a deterministic release archive under `dist/` with
+SHA-256 checksums. From the host repository, install the current source for a
+later supervised browser test:
 
-```sh
-node --test tests/*.mjs
+```powershell
+node scripts/dev-install-addon.cjs ../addon-dnd-character-sheets
 ```
 
-See [`docs/RULES_EDGE_CASES.md`](docs/RULES_EDGE_CASES.md) for the sheet-side
-service and reconciliation semantics and
-[`docs/RENDERER_CONTRACT.md`](docs/RENDERER_CONTRACT.md) for third-party style
-authoring. [`AGENTS.md`](AGENTS.md) contains the
-repository contract; the engine API is documented in the sibling engine repo.
-
-## License
-
-The original software and documentation in this repository are licensed under
-the [MIT License](LICENSE).
+Deployment and campaign conversion are intentionally performed later with the
+site owner present.
