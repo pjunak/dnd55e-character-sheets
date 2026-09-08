@@ -55,7 +55,9 @@ export class RulesEngineClient {
       const request: Record<string, unknown> = { contractVersion: "rules-engine-query.v1", kind, limit: 200 };
       if (cursor !== undefined) request["cursor"] = cursor;
       const page = await this.#handle.call<{ readonly records: readonly RuleRecord[]; readonly nextCursor?: string }>("query-records", request, { deadlineMs: 6_000, signal: this.#signal });
-      records.push(...page.records);
+      for (const record of page.records) {
+        records.push({ ...asRecord(record["value"]), id: record.id, kind: record.kind });
+      }
       cursor = page.nextCursor;
     } while (cursor !== undefined);
     return records;
@@ -71,7 +73,10 @@ export function materializeHydration(
   hydration: Hydration,
   engineIdentity: Readonly<Record<string, unknown>> = {},
 ): SheetState {
+  if (hydration.identity === undefined) throw new Error(hydration.warnings.join(" ") || "Rules data is unavailable. Saved values have been kept.");
   const next = cloneSheet(current);
+  // Scores in a hydrated sheet include grants; keep their original input for the next calculation.
+  next.baseStats ??= { ...current.abilities };
   const computed = hydration.sheet;
   const derived = asRecord(computed["derived"]);
   const computedAbilities = asRecord(computed["abilities"]);
@@ -100,10 +105,12 @@ export function materializeHydration(
 function materializeSpellSnapshots(next: SheetState, computed: Record<string, unknown>): void {
   const snapshots: SheetState["spells"] = [];
   const seen = new Set<string>();
+  const previous = new Map(next.spells.filter(spell => spell.origin === "snapshot").map(spell => [spell.id, spell]));
   const add = (reference: unknown, source: string): void => {
     if (typeof reference !== "string" || reference.length === 0 || seen.has(reference)) return;
     seen.add(reference);
-    snapshots.push({ id: `snapshot:${reference}`, name: reference, level: 0, school: "", prepared: true, origin: "snapshot", source });
+    const id = `snapshot:${reference}`;
+    snapshots.push({ id, name: reference, level: 0, school: "", prepared: true, ...previous.get(id), origin: "snapshot", source });
   };
   const spellcasting = asRecord(computed["spellcasting"]);
   const perClass = Array.isArray(spellcasting["perClass"]) ? spellcasting["perClass"] as unknown[] : [];
@@ -120,7 +127,7 @@ function materializeSpellSnapshots(next: SheetState, computed: Record<string, un
 
 function boundedMaterializedSnapshot(sheet: Record<string, unknown>): Record<string, unknown> {
   const snapshot: Record<string, unknown> = {};
-  for (const field of ["derived", "abilities", "saves", "skills", "languages", "senses", "resistances", "damageImmunities", "conditionImmunities", "proficiencies", "features", "spellcasting", "totalLevel"] as const) {
+  for (const field of ["derived", "abilities", "saves", "skills", "languages", "senses", "resistances", "damageImmunities", "conditionImmunities", "proficiencies", "features", "spellcasting", "totalLevel", "resources", "weapons", "attunement", "activations"] as const) {
     if (sheet[field] !== undefined) snapshot[field] = structuredClone(sheet[field]);
   }
   return snapshot;
@@ -133,5 +140,5 @@ function materializeProficiencies(source: Record<string, unknown>, target: Recor
 function copyNumber(source: Record<string, unknown>, sourceField: string, target: SheetState, targetField: "maxHp" | "ac" | "initiative" | "speed" | "profBonus"): void {
   if (finite(source[sourceField])) target[targetField] = Number(source[sourceField]);
 }
-function finite(value: unknown): boolean { return Number.isFinite(Number(value)); }
+function finite(value: unknown): boolean { return typeof value === "number" && Number.isFinite(value); }
 function asRecord(value: unknown): Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : {}; }

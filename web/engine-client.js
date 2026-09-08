@@ -34,7 +34,9 @@ export class RulesEngineClient {
             if (cursor !== undefined)
                 request["cursor"] = cursor;
             const page = await this.#handle.call("query-records", request, { deadlineMs: 6_000, signal: this.#signal });
-            records.push(...page.records);
+            for (const record of page.records) {
+                records.push({ ...asRecord(record["value"]), id: record.id, kind: record.kind });
+            }
             cursor = page.nextCursor;
         } while (cursor !== undefined);
         return records;
@@ -44,7 +46,11 @@ export function applyDecisions(current, decisions) {
     return normalizeSheet({ ...current, ...structuredClone(decisions) });
 }
 export function materializeHydration(current, hydration, engineIdentity = {}) {
+    if (hydration.identity === undefined)
+        throw new Error(hydration.warnings.join(" ") || "Rules data is unavailable. Saved values have been kept.");
     const next = cloneSheet(current);
+    // Scores in a hydrated sheet include grants; keep their original input for the next calculation.
+    next.baseStats ??= { ...current.abilities };
     const computed = hydration.sheet;
     const derived = asRecord(computed["derived"]);
     const computedAbilities = asRecord(computed["abilities"]);
@@ -74,11 +80,13 @@ export function materializeHydration(current, hydration, engineIdentity = {}) {
 function materializeSpellSnapshots(next, computed) {
     const snapshots = [];
     const seen = new Set();
+    const previous = new Map(next.spells.filter(spell => spell.origin === "snapshot").map(spell => [spell.id, spell]));
     const add = (reference, source) => {
         if (typeof reference !== "string" || reference.length === 0 || seen.has(reference))
             return;
         seen.add(reference);
-        snapshots.push({ id: `snapshot:${reference}`, name: reference, level: 0, school: "", prepared: true, origin: "snapshot", source });
+        const id = `snapshot:${reference}`;
+        snapshots.push({ id, name: reference, level: 0, school: "", prepared: true, ...previous.get(id), origin: "snapshot", source });
     };
     const spellcasting = asRecord(computed["spellcasting"]);
     const perClass = Array.isArray(spellcasting["perClass"]) ? spellcasting["perClass"] : [];
@@ -97,7 +105,7 @@ function materializeSpellSnapshots(next, computed) {
 }
 function boundedMaterializedSnapshot(sheet) {
     const snapshot = {};
-    for (const field of ["derived", "abilities", "saves", "skills", "languages", "senses", "resistances", "damageImmunities", "conditionImmunities", "proficiencies", "features", "spellcasting", "totalLevel"]) {
+    for (const field of ["derived", "abilities", "saves", "skills", "languages", "senses", "resistances", "damageImmunities", "conditionImmunities", "proficiencies", "features", "spellcasting", "totalLevel", "resources", "weapons", "attunement", "activations"]) {
         if (sheet[field] !== undefined)
             snapshot[field] = structuredClone(sheet[field]);
     }
@@ -111,5 +119,5 @@ function copyNumber(source, sourceField, target, targetField) {
     if (finite(source[sourceField]))
         target[targetField] = Number(source[sourceField]);
 }
-function finite(value) { return Number.isFinite(Number(value)); }
+function finite(value) { return typeof value === "number" && Number.isFinite(value); }
 function asRecord(value) { return typeof value === "object" && value !== null && !Array.isArray(value) ? value : {}; }

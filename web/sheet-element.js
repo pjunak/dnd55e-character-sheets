@@ -1,16 +1,27 @@
 import { applyDecisions, materializeHydration } from "./engine-client.js";
 import { runtimeFor } from "./runtime.js";
 import { parseSheet, serializeSheet } from "./sheet-transfer.js";
-import { abilities, abilityModifier, cloneSheet, createId, signed, skills } from "./sheet-state.js";
-export const sheetElementTag = "dnd-character-sheet";
-const tabs = [["sheet", "Sheet"], ["combat", "Combat"], ["spells", "Spells"], ["inventory", "Inventory"], ["builder", "Builder"], ["notes", "Notes"], ["tools", "Tools"]];
-export function defineSheetElement() {
+import { abilities, cloneSheet, createId } from "./sheet-state.js";
+import { SheetEditor } from "./sheet-editor.js";
+import { abilityRail, backpack, combatDetails, el, preferredLayout, vitals } from "./play-view.js";
+const tabs = [["sheet", "Character Sheet"], ["combat", "Combat"], ["spells", "Spellbook"], ["notes", "Notes"], ["builder", "Builder"], ["tools", "Settings"]];
+export function defineSheetElement(generation) {
+    const sheetElementTag = `dnd-character-sheet-${generation}`;
     if (customElements.get(sheetElementTag) !== undefined)
-        return;
+        return sheetElementTag;
     class CharacterSheetElement extends HTMLElement {
         #contribution;
         #runtime;
-        #snapshot;
+        #editor;
+        get #snapshot() { return this.#editor?.snapshot; }
+        #epoch = 0;
+        #typing = false;
+        #deferredRender = false;
+        #pointerDown = false;
+        #changingControl = false;
+        #requestedRender = false;
+        #layout = "compact";
+        #editing = false;
         #tab = "sheet";
         #busy = false;
         #message = "";
@@ -20,18 +31,56 @@ export function defineSheetElement() {
         #classRecords = [];
         #featRecords = [];
         set codexContribution(value) {
-            const previousKey = this.#contribution?.host.key;
+            const previous = this.#contribution;
             this.#contribution = value;
             if (this.isConnected) {
-                if (previousKey !== value.host.key)
+                if (previous?.host.key !== value.host.key || previous?.host.canEdit !== value.host.canEdit)
                     void this.#connect();
                 else
-                    this.#render();
+                    this.#publishEdits();
             }
         }
-        connectedCallback() { this.classList.add("addon-dnd-sheets"); void this.#connect(); }
-        disconnectedCallback() { this.#runtime = undefined; }
+        constructor() {
+            super();
+            this.addEventListener("pointerdown", () => { this.#pointerDown = true; });
+            this.addEventListener("change", () => {
+                this.#changingControl = true;
+                setTimeout(() => { this.#changingControl = false; if (this.isConnected && this.#deferredRender)
+                    this.#render(true); }, 0);
+            }, true);
+            this.addEventListener("input", event => { if (this.#canEdit() && event.target instanceof HTMLElement && !event.target.closest(".dnd-builder-choices, .dnd-builder-classes") && event.target.getAttribute("aria-label") !== "Sheet layout") {
+                this.#typing = true;
+                this.#publishEdits();
+            } });
+            // Focus settles after blur/change. Replacing controls inside focusout can cancel the pending click.
+            this.addEventListener("focusout", () => { setTimeout(() => { if (this.isConnected && this.#deferredRender && !this.contains(this.ownerDocument.activeElement))
+                this.#render(); }, 0); });
+        }
+        connectedCallback() {
+            this.classList.add("addon-dnd-sheets");
+            this.ownerDocument.addEventListener("pointerup", this.#releasePointer);
+            this.ownerDocument.addEventListener("pointercancel", this.#releasePointer);
+            void this.#connect();
+        }
+        disconnectedCallback() {
+            this.#epoch++;
+            this.#editor?.dispose();
+            this.#runtime = undefined;
+            this.#pointerDown = false;
+            this.ownerDocument.removeEventListener("pointerup", this.#releasePointer);
+            this.ownerDocument.removeEventListener("pointercancel", this.#releasePointer);
+        }
+        #releasePointer = () => {
+            if (!this.#pointerDown)
+                return;
+            setTimeout(() => { this.#pointerDown = false; if (this.isConnected && this.#deferredRender)
+                this.#render(true); }, 0);
+        };
         async #connect() {
+            const epoch = ++this.#epoch;
+            this.#editor?.dispose();
+            this.#editor = undefined;
+            this.#typing = false;
             const contribution = this.#contribution;
             if (contribution === undefined || contribution.host.collection !== "characters") {
                 this.#renderUnavailable("The host did not provide a character record context.");
@@ -43,33 +92,65 @@ export function defineSheetElement() {
                 return;
             }
             this.#runtime = runtime;
-            this.#snapshot = undefined;
+            try {
+                this.#layout = preferredLayout(this.ownerDocument.defaultView?.localStorage, contribution.host.key);
+            }
+            catch {
+                this.#layout = "compact";
+            }
             this.#hydration = undefined;
             this.#builderPlan = undefined;
             this.#message = "";
             this.#busy = true;
             this.#render();
             try {
-                this.#snapshot = await runtime.repository.load(contribution.host.key);
+                const snapshot = await runtime.repository.load(contribution.host.key);
+                if (epoch !== this.#epoch)
+                    return;
+                this.#editor = new SheetEditor(runtime.repository, snapshot, () => { if (epoch === this.#epoch) {
+                    this.#publishEdits();
+                    this.#render(true);
+                } });
             }
             catch (error) {
-                this.#fail(error, "Could not load this character sheet.");
+                if (epoch === this.#epoch)
+                    this.#fail(error, "Could not load this character sheet.");
             }
             finally {
-                this.#busy = false;
-                this.#render();
+                if (epoch === this.#epoch) {
+                    this.#busy = false;
+                    this.#publishEdits();
+                    this.#render();
+                }
             }
         }
-        #render() {
+        #render(preserveFocus = false) {
+            if (!preserveFocus)
+                this.#requestedRender = true;
+            this.#publishEdits();
+            if (this.#pointerDown || this.#changingControl) {
+                this.#deferredRender = true;
+                return;
+            }
+            this.#updateStatus();
+            const focused = this.ownerDocument.activeElement;
+            if (!this.#busy && focused !== null && this.contains(focused) && ((preserveFocus && !this.#requestedRender) || focused.matches("input, textarea, select"))) {
+                this.#deferredRender = true;
+                return;
+            }
+            this.#deferredRender = false;
+            this.#requestedRender = false;
             const snapshot = this.#snapshot;
             if (snapshot === undefined) {
                 if (this.#busy)
                     this.replaceChildren(messageBlock(this.ownerDocument, "Loading character sheet…", "status"));
+                else
+                    this.#renderUnavailable(this.#message || "Could not load this character sheet.");
                 return;
             }
             const document = this.ownerDocument;
             const root = document.createElement("section");
-            root.className = "dnd-sheet-shell";
+            root.className = `dnd-sheet-shell dse-layout-${this.#layout}`;
             const heading = document.createElement("div");
             heading.className = "dnd-sheet-heading";
             const title = document.createElement("div");
@@ -80,13 +161,25 @@ export function defineSheetElement() {
             title.append(h2, subtitle);
             const engine = document.createElement("span");
             engine.className = `dnd-sheet-engine ${this.#runtime?.engine.available === true ? "available" : "standalone"}`;
-            engine.textContent = this.#runtime?.engine.available === true ? `Rules: ${this.#runtime.engine.providerLabel}` : "Standalone";
+            engine.textContent = this.#runtime?.engine.available === true ? "Rules engine connected" : "Standalone";
             heading.append(title, engine);
+            if (this.#contribution?.host.canEdit)
+                heading.append(actionButton(document, this.#editing ? "Done editing" : "Edit sheet", () => {
+                    if (this.#busy || this.#editor?.dirty)
+                        return;
+                    this.#editing = !this.#editing;
+                    this.#render();
+                }, "small", this.#busy || this.#editor?.dirty === true));
             root.append(heading, this.#renderTabs(document));
-            if (this.#message.length > 0)
-                root.append(messageBlock(document, this.#message, this.#messageKind));
+            const status = document.createElement("div");
+            status.className = "dnd-save-status";
+            root.append(status);
             const panel = document.createElement("div");
             panel.className = "dnd-sheet-panel";
+            panel.inert = this.#busy;
+            panel.id = `dnd-panel-${this.#tab}`;
+            panel.setAttribute("role", "tabpanel");
+            panel.setAttribute("aria-labelledby", `dnd-tab-${this.#tab}`);
             switch (this.#tab) {
                 case "sheet":
                     this.#renderSheet(panel, snapshot.state);
@@ -96,9 +189,6 @@ export function defineSheetElement() {
                     break;
                 case "spells":
                     this.#renderSpells(panel, snapshot.state);
-                    break;
-                case "inventory":
-                    this.#renderInventory(panel, snapshot.state);
                     break;
                 case "builder":
                     this.#renderBuilder(panel, snapshot.state);
@@ -112,98 +202,81 @@ export function defineSheetElement() {
             }
             root.append(panel);
             this.replaceChildren(root);
+            this.#updateStatus();
+        }
+        #publishEdits() { this.#contribution?.edits.set({ dirty: this.#typing || this.#editor?.dirty === true, saving: this.#editor?.saving === true || this.#busy }); }
+        #updateStatus() {
+            const area = this.querySelector(".dnd-save-status");
+            if (area === null)
+                return;
+            const editor = this.#editor;
+            const signature = JSON.stringify([editor?.error === undefined ? null : errorStatus(editor.error) ?? "failed", editor?.saving, editor?.dirty, this.#message, this.#messageKind]);
+            if (area.getAttribute("data-status") === signature)
+                return;
+            area.setAttribute("data-status", signature);
+            area.replaceChildren();
+            if (editor?.error !== undefined) {
+                const conflict = errorStatus(editor.error) === 409;
+                area.append(messageBlock(this.ownerDocument, conflict ? "The sheet changed elsewhere. Your edits are kept here. Export your draft before reloading the saved sheet." : "Could not save. Your edits are kept here; retry when the connection is available.", "alert"));
+                area.append(actionButton(this.ownerDocument, "Export draft", () => downloadSheet(editor.snapshot.state)), actionButton(this.ownerDocument, "Reload saved sheet", () => void this.#connect()));
+                if (!conflict)
+                    area.append(actionButton(this.ownerDocument, "Retry save", () => void editor.save()));
+            }
+            else if (editor?.saving)
+                area.append(messageBlock(this.ownerDocument, "Saving…", "status"));
+            else if (editor?.dirty)
+                area.append(messageBlock(this.ownerDocument, "Unsaved changes.", "status"));
+            else if (this.#message)
+                area.append(messageBlock(this.ownerDocument, this.#message, this.#messageKind));
         }
         #renderTabs(document) {
             const navigation = document.createElement("nav");
-            navigation.className = "dnd-sheet-tabs";
+            navigation.className = "dnd-sheet-tabs codex-tab-strip";
+            navigation.setAttribute("role", "tablist");
             navigation.setAttribute("aria-label", "Character sheet sections");
             for (const [id, label] of tabs) {
                 const item = actionButton(document, label, () => { this.#tab = id; this.#message = ""; this.#render(); });
-                item.className = id === this.#tab ? "active" : "";
-                item.setAttribute("aria-current", id === this.#tab ? "page" : "false");
+                item.className = `codex-tab${id === this.#tab ? " is-active" : ""}${id === "builder" || id === "tools" ? " codex-tab-tool" : ""}`;
+                item.id = `dnd-tab-${id}`;
+                item.setAttribute("role", "tab");
+                item.setAttribute("aria-selected", String(id === this.#tab));
+                item.setAttribute("aria-controls", `dnd-panel-${id}`);
+                item.tabIndex = id === this.#tab ? 0 : -1;
+                item.addEventListener("keydown", event => {
+                    const index = tabs.findIndex(([key]) => key === id);
+                    const next = event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1 : event.key === "ArrowRight" ? (index + 1) % tabs.length : event.key === "ArrowLeft" ? (index + tabs.length - 1) % tabs.length : -1;
+                    if (next < 0)
+                        return;
+                    event.preventDefault();
+                    this.#tab = tabs[next][0];
+                    this.#render();
+                    this.querySelector(`#dnd-tab-${this.#tab}`)?.focus();
+                });
                 navigation.append(item);
             }
             return navigation;
         }
+        #view(state) { return { document: this.ownerDocument, state, layout: this.#layout, editable: this.#canEdit(), save: change => { void this.#save(change); } }; }
         #renderSheet(panel, state) {
-            const document = panel.ownerDocument;
-            const identity = card(document, "Identity");
-            const fields = document.createElement("div");
-            fields.className = "dnd-sheet-form-grid";
-            fields.append(this.#textField("Player", state.player, (draft, value) => { draft.player = value; }), this.#textField("Class", state.className, (draft, value) => { draft.className = value; }), this.#textField("Subclass", state.subclass, (draft, value) => { draft.subclass = value; }), this.#numberField("Level", state.level, (draft, value) => { draft.level = Math.max(1, Math.trunc(value)); }, 1), this.#textField("Species", state.species || state.race, (draft, value) => { draft.species = value; draft.race = value; }), this.#textField("Background", state.background, (draft, value) => { draft.background = value; }), this.#textField("Alignment", state.alignment, (draft, value) => { draft.alignment = value; }));
-            identity.append(fields);
-            const scores = card(document, "Ability scores");
-            const scoreGrid = document.createElement("div");
-            scoreGrid.className = "dnd-sheet-abilities";
-            for (const ability of abilities) {
-                const tile = document.createElement("label");
-                const name = document.createElement("span");
-                name.textContent = ability;
-                const input = numberInput(document, state.abilities[ability], !this.#canEdit(), 1, 30);
-                input.addEventListener("change", () => void this.#save((draft) => { draft.abilities[ability] = numberValue(input, state.abilities[ability]); }));
-                const modifier = document.createElement("strong");
-                modifier.textContent = signed(abilityModifier(state.abilities[ability]));
-                tile.append(name, input, modifier);
-                scoreGrid.append(tile);
-            }
-            scores.append(scoreGrid);
-            const proficiencies = card(document, "Proficiencies");
-            const columns = document.createElement("div");
-            columns.className = "dnd-sheet-proficiencies";
-            const saves = document.createElement("div");
-            const saveTitle = document.createElement("h4");
-            saveTitle.textContent = "Saving throws";
-            saves.append(saveTitle);
-            for (const ability of abilities)
-                saves.append(this.#proficiencyToggle(ability, state.saveProf[ability] === true, (draft, checked) => { draft.saveProf[ability] = checked; draft.manualSaveProf[ability] = checked; }, signed(abilityModifier(state.abilities[ability]) + (state.saveProf[ability] ? state.profBonus : 0))));
-            const skillList = document.createElement("div");
-            const skillTitle = document.createElement("h4");
-            skillTitle.textContent = "Skills";
-            skillList.append(skillTitle);
-            for (const [skill, ability] of skills) {
-                const expertise = state.skillExpertise[skill] === true;
-                const bonus = abilityModifier(state.abilities[ability]) + (state.skillProf[skill] ? state.profBonus : 0) + (expertise ? state.profBonus : 0);
-                skillList.append(this.#proficiencyToggle(titleCase(skill), state.skillProf[skill] === true, (draft, checked) => { draft.skillProf[skill] = checked; if (!checked)
-                    draft.skillExpertise[skill] = false; }, `${signed(bonus)}${expertise ? " expertise" : ""}`, (draft) => { draft.skillExpertise[skill] = !draft.skillExpertise[skill]; draft.skillProf[skill] = true; }));
-            }
-            columns.append(saves, skillList);
-            proficiencies.append(columns);
-            panel.append(identity, scores, proficiencies);
+            const view = this.#view(state), columns = el(panel.ownerDocument, "div", "dse-cols"), main = el(panel.ownerDocument, "div", "dse-cols-main");
+            main.append(vitals(view), backpack(view));
+            columns.append(abilityRail(view), main);
+            panel.append(columns);
         }
         #renderCombat(panel, state) {
-            const document = panel.ownerDocument;
-            const vitals = card(document, "Vitals");
-            const grid = document.createElement("div");
-            grid.className = "dnd-sheet-vitals";
-            grid.append(this.#numberField("Current HP", state.hp, (draft, value) => { draft.hp = Math.max(0, Math.min(value, Math.max(draft.maxHp, value))); }, 0), this.#numberField("Maximum HP", state.maxHp, (draft, value) => { draft.maxHp = Math.max(0, value); draft.hp = Math.min(draft.hp, draft.maxHp); }, 0), this.#numberField("Temporary HP", state.tempHp, (draft, value) => { draft.tempHp = Math.max(0, value); }, 0), this.#numberField("Armor class", state.ac, (draft, value) => { draft.ac = value; }), this.#numberField("Initiative", state.initiative, (draft, value) => { draft.initiative = value; }), this.#numberField("Speed", state.speed, (draft, value) => { draft.speed = Math.max(0, value); }, 0), this.#numberField("Proficiency", state.profBonus, (draft, value) => { draft.profBonus = value; }));
-            vitals.append(grid);
-            const resources = card(document, "Resources");
-            resources.append(this.#resourceTable(state.resources));
-            if (this.#canEdit())
-                resources.append(actionButton(document, "Add resource", () => void this.#save((draft) => { draft.resources.push({ id: createId("resource"), name: "New resource", current: 0, max: 1 }); })));
-            panel.append(vitals, resources);
+            const view = this.#view(state), columns = el(panel.ownerDocument, "div", "dse-cols"), main = el(panel.ownerDocument, "div", "dse-cols-main");
+            main.append(vitals(view), combatDetails(view));
+            columns.append(abilityRail(view), main);
+            panel.append(columns);
         }
         #renderSpells(panel, state) {
             const document = panel.ownerDocument;
+            panel.append(vitals(this.#view(state)));
             const section = card(document, "Spellbook");
             section.append(this.#spellTable(state.spells));
             if (this.#canEdit())
                 section.append(actionButton(document, "Add spell", () => void this.#save((draft) => { draft.spells.push({ id: createId("spell"), name: "New spell", level: 0, school: "", prepared: false, origin: "manual" }); })));
             panel.append(section);
-        }
-        #renderInventory(panel, state) {
-            const document = panel.ownerDocument;
-            const currency = card(document, "Currency");
-            const coins = document.createElement("div");
-            coins.className = "dnd-sheet-currency";
-            for (const coin of ["pp", "gp", "ep", "sp", "cp"])
-                coins.append(this.#numberField(coin.toUpperCase(), state.currency[coin] ?? 0, (draft, value) => { draft.currency[coin] = Math.max(0, value); }, 0));
-            currency.append(coins);
-            const inventory = card(document, "Inventory");
-            inventory.append(this.#inventoryTable(state.inventory));
-            if (this.#canEdit())
-                inventory.append(actionButton(document, "Add item", () => void this.#save((draft) => { draft.inventory.push({ id: createId("item"), name: "New item", qty: 1, location: "pack", notes: "" }); })));
-            panel.append(currency, inventory);
         }
         #renderBuilder(panel, state) {
             const document = panel.ownerDocument;
@@ -253,12 +326,39 @@ export function defineSheetElement() {
             textarea.rows = 14;
             textarea.value = state.notes;
             textarea.disabled = !this.#canEdit();
+            textarea.setAttribute("aria-label", "Sheet notes");
             textarea.addEventListener("change", () => void this.#save((draft) => { draft.notes = textarea.value; }));
             section.append(textarea);
             panel.append(section);
         }
         #renderTools(panel, state) {
             const document = panel.ownerDocument;
+            const presentation = card(document, "Presentation");
+            const layout = document.createElement("select");
+            layout.setAttribute("aria-label", "Sheet layout");
+            layout.append(option(document, "compact", "Compact"), option(document, "classic", "Classic"));
+            layout.value = this.#layout;
+            layout.addEventListener("change", () => {
+                this.#layout = layout.value === "classic" ? "classic" : "compact";
+                try {
+                    this.ownerDocument.defaultView?.localStorage.setItem(`dse-ui:renderer:${this.#snapshot?.key}`, `builtin:${this.#layout}`);
+                }
+                catch { /* This view still changes when browser storage is disabled. */ }
+                layout.blur();
+                this.#typing = false;
+                this.#render();
+            });
+            presentation.append(layout);
+            const identity = card(document, "Identity");
+            const fields = document.createElement("div");
+            fields.className = "dnd-sheet-form-grid";
+            fields.append(this.#textField("Player", state.player, (draft, value) => { draft.player = value; }), this.#textField("Class", state.className, (draft, value) => { draft.className = value; }), this.#textField("Subclass", state.subclass, (draft, value) => { draft.subclass = value; }), this.#numberField("Level", state.level, (draft, value) => { draft.level = Math.max(1, Math.trunc(value)); }, 1), this.#textField("Species", state.species || state.race, (draft, value) => { draft.species = value; draft.race = value; }), this.#textField("Background", state.background, (draft, value) => { draft.background = value; }), this.#textField("Alignment", state.alignment, (draft, value) => { draft.alignment = value; }), this.#numberField("Initiative", state.initiative, (draft, value) => { draft.initiative = value; }));
+            identity.append(fields);
+            const resources = card(document, "Manual resources");
+            resources.append(this.#resourceTable(state.resources));
+            if (this.#canEdit())
+                resources.append(actionButton(document, "Add resource", () => void this.#save(draft => { draft.resources.push({ id: createId("resource"), name: "New resource", current: 1, max: 1 }); })));
+            panel.append(presentation, identity, resources);
             const engine = card(document, "Rules state");
             const mode = document.createElement("p");
             mode.textContent = state.rulesMode === "manual" ? "Manual values are authoritative." : "Engine values may be refreshed explicitly; stored fallback values remain authoritative between refreshes.";
@@ -275,12 +375,13 @@ export function defineSheetElement() {
             }
             const transfer = card(document, "Transfer this sheet");
             const explanation = document.createElement("p");
-            explanation.textContent = "Export or import only this character's D&D sheet data. Campaign conversion is handled separately during the rewrite cutover.";
+            explanation.textContent = "Export or import this character's D&D sheet, including equipment and notes. The character's story and portrait stay in the article.";
             transfer.append(explanation, actionButton(document, "Export JSON", () => downloadSheet(state)));
             if (this.#canEdit()) {
                 const input = document.createElement("input");
                 input.type = "file";
                 input.accept = "application/json,.json";
+                input.setAttribute("aria-label", "Import sheet JSON");
                 input.addEventListener("change", () => { const file = input.files?.[0]; if (file !== undefined)
                     void this.#importFile(file); });
                 transfer.append(input);
@@ -383,7 +484,6 @@ export function defineSheetElement() {
             wrapper.append(ability, amount, actionButton(document, "Apply ability", () => void this.#applyBuilderChoice(descriptor["id"], { ability: ability.value, amount: numberValue(amount, 0) }), "primary", !this.#canEdit() || this.#busy));
             return wrapper;
         }
-        #inventoryTable(items) { return this.#editableTable(items, ["name", "qty", "location", "notes"], (draft) => draft.inventory); }
         #spellTable(items) { return this.#editableTable(items, ["name", "level", "school", "prepared"], (draft) => draft.spells); }
         #resourceTable(items) { return this.#editableTable(items, ["name", "current", "max"], (draft) => draft.resources); }
         #editableTable(items, fields, list) {
@@ -395,7 +495,7 @@ export function defineSheetElement() {
                 row.className = "dnd-sheet-row";
                 for (const field of fields) {
                     const current = item[field];
-                    const input = field === "prepared" ? document.createElement("input") : document.createElement("input");
+                    const input = document.createElement("input");
                     if (field === "prepared") {
                         input.type = "checkbox";
                         input.checked = current === true;
@@ -439,63 +539,38 @@ export function defineSheetElement() {
             wrapper.append(input);
             return wrapper;
         }
-        #proficiencyToggle(label, checked, update, value, expertise) {
-            const wrapper = this.ownerDocument.createElement("div");
-            wrapper.className = "dnd-sheet-prof-row";
-            const input = this.ownerDocument.createElement("input");
-            input.type = "checkbox";
-            input.checked = checked;
-            input.disabled = !this.#canEdit();
-            input.addEventListener("change", () => void this.#save((draft) => update(draft, input.checked)));
-            const text = this.ownerDocument.createElement("span");
-            text.textContent = label;
-            const total = this.ownerDocument.createElement("strong");
-            total.textContent = value;
-            wrapper.append(input, text, total);
-            if (expertise !== undefined && this.#canEdit())
-                wrapper.append(actionButton(this.ownerDocument, "Expertise", () => void this.#save(expertise), "small"));
-            return wrapper;
-        }
         async #save(mutate) {
-            const runtime = this.#runtime;
-            const snapshot = this.#snapshot;
-            if (runtime === undefined || snapshot === undefined || !this.#canEdit() || this.#busy)
-                return;
-            this.#busy = true;
-            this.#message = "Saving…";
-            this.#messageKind = "status";
+            const editor = this.#editor;
+            if (editor === undefined || !this.#canEdit())
+                return false;
+            this.#typing = false;
+            this.#message = "";
+            const pending = editor.change(mutate);
             this.#render();
-            try {
-                this.#snapshot = await runtime.repository.save(snapshot, mutate);
+            const saved = await pending;
+            if (editor !== this.#editor)
+                return false;
+            if (saved) {
                 this.#message = "Saved.";
+                this.#messageKind = "status";
             }
-            catch (error) {
-                if (errorStatus(error) === 409) {
-                    try {
-                        this.#snapshot = await runtime.repository.load(snapshot.key);
-                    }
-                    catch { /* original conflict remains most useful */ }
-                    this.#message = "The sheet changed elsewhere. The newest version was reloaded; please make your edit again.";
-                }
-                else
-                    this.#message = errorMessage(error, "Could not save the sheet.");
-                this.#messageKind = "alert";
-            }
-            finally {
-                this.#busy = false;
-                this.#render();
-            }
+            this.#publishEdits();
+            this.#render(true);
+            return saved;
         }
         async #loadBuilder() {
             const runtime = this.#runtime;
             const snapshot = this.#snapshot;
-            if (runtime === undefined || snapshot === undefined || this.#busy)
+            if (runtime === undefined || snapshot === undefined || this.#busy || this.#editor?.dirty)
                 return;
+            const epoch = this.#epoch;
             this.#busy = true;
             this.#message = "Loading builder…";
             this.#render();
             try {
                 const [result, classes, feats] = await Promise.all([runtime.engine.builderPlan(snapshot.state), runtime.engine.queryAll("class"), runtime.engine.queryAll("feat")]);
+                if (epoch !== this.#epoch)
+                    return;
                 if (!result.available || result.plan === undefined)
                     throw new Error(result.errors.join(" ") || "The rules data needed by the builder is unavailable.");
                 this.#builderPlan = result.plan;
@@ -504,131 +579,174 @@ export function defineSheetElement() {
                 this.#message = "";
             }
             catch (error) {
-                this.#fail(error, "Could not load the builder.");
+                if (epoch === this.#epoch)
+                    this.#fail(error, "Could not load the builder.");
             }
             finally {
-                this.#busy = false;
-                this.#render();
+                if (epoch === this.#epoch) {
+                    this.#busy = false;
+                    this.#render();
+                }
             }
         }
         async #changeClasses(classes) {
             const runtime = this.#runtime;
             const snapshot = this.#snapshot;
-            if (runtime === undefined || snapshot === undefined || !this.#canEdit())
+            if (runtime === undefined || snapshot === undefined || !this.#canEdit() || this.#busy || this.#editor?.dirty)
                 return;
+            const epoch = this.#epoch;
             this.#busy = true;
             this.#render();
             try {
                 const changed = cloneSheet(snapshot.state);
                 changed.classes = classes.map((item) => structuredClone(item));
                 const reconciled = await runtime.engine.reconcile(changed);
+                if (epoch !== this.#epoch)
+                    return;
                 if (!reconciled.available)
                     throw new Error(reconciled.errors.join(" ") || "The engine could not reconcile this build.");
                 const decisions = applyDecisions(changed, reconciled.decisions);
                 const hydration = await runtime.engine.hydrate(decisions);
+                if (epoch !== this.#epoch)
+                    return;
                 const materialized = this.#withClassFallback(materializeHydration(decisions, hydration, runtime.engine.providerIdentity));
-                this.#snapshot = await runtime.repository.save(snapshot, (draft) => replaceState(draft, materialized));
-                const plan = await runtime.engine.builderPlan(this.#snapshot.state);
-                this.#builderPlan = plan.plan;
+                if (epoch !== this.#epoch || !await this.#save((draft) => replaceState(draft, materialized)))
+                    return;
+                this.#builderPlan = undefined;
+                const plan = await runtime.engine.builderPlan(materialized).catch(() => undefined);
+                if (epoch !== this.#epoch)
+                    return;
+                this.#builderPlan = plan?.plan;
                 this.#hydration = hydration;
                 this.#message = "Build updated and fallback values saved.";
                 this.#messageKind = "status";
             }
             catch (error) {
-                this.#fail(error, "Could not update the classes.");
+                if (epoch === this.#epoch)
+                    this.#fail(error, "Could not update the classes.");
             }
             finally {
-                this.#busy = false;
-                this.#render();
+                if (epoch === this.#epoch) {
+                    this.#busy = false;
+                    this.#render();
+                }
             }
         }
         async #applyBuilderChoice(choiceId, value, slot) {
             const runtime = this.#runtime;
             const snapshot = this.#snapshot;
-            if (runtime === undefined || snapshot === undefined || !this.#canEdit() || this.#busy)
+            if (runtime === undefined || snapshot === undefined || !this.#canEdit() || this.#busy || this.#editor?.dirty)
                 return;
+            const epoch = this.#epoch;
             this.#busy = true;
             this.#render();
             try {
                 const change = slot === undefined ? { choiceId, value } : { choiceId, slot, value };
                 const applied = await runtime.engine.applyChoice(snapshot.state, change);
+                if (epoch !== this.#epoch)
+                    return;
                 if (!applied.available)
                     throw new Error(applied.errors.join(" ") || "The engine rejected this choice.");
                 const decisions = applyDecisions(snapshot.state, applied.decisions);
                 const hydration = await runtime.engine.hydrate(decisions);
+                if (epoch !== this.#epoch)
+                    return;
                 const materialized = this.#withClassFallback(materializeHydration(decisions, hydration, runtime.engine.providerIdentity));
-                this.#snapshot = await runtime.repository.save(snapshot, (draft) => replaceState(draft, materialized));
-                const plan = await runtime.engine.builderPlan(this.#snapshot.state);
-                this.#builderPlan = plan.plan;
+                if (epoch !== this.#epoch || !await this.#save((draft) => replaceState(draft, materialized)))
+                    return;
+                this.#builderPlan = undefined;
+                const plan = await runtime.engine.builderPlan(materialized).catch(() => undefined);
+                if (epoch !== this.#epoch)
+                    return;
+                this.#builderPlan = plan?.plan;
                 this.#hydration = hydration;
                 this.#message = "Choice saved and fallback values refreshed.";
                 this.#messageKind = "status";
             }
             catch (error) {
-                this.#fail(error, "Could not apply this builder choice.");
+                if (epoch === this.#epoch)
+                    this.#fail(error, "Could not apply this builder choice.");
             }
             finally {
-                this.#busy = false;
-                this.#render();
+                if (epoch === this.#epoch) {
+                    this.#busy = false;
+                    this.#render();
+                }
             }
         }
         async #previewHydration() {
             const runtime = this.#runtime;
             const snapshot = this.#snapshot;
-            if (runtime === undefined || snapshot === undefined || this.#busy)
+            if (runtime === undefined || snapshot === undefined || this.#busy || this.#editor?.dirty)
                 return;
+            const epoch = this.#epoch;
             this.#busy = true;
             this.#render();
             try {
-                this.#hydration = await runtime.engine.hydrate(snapshot.state);
+                const hydration = await runtime.engine.hydrate(snapshot.state);
+                if (epoch !== this.#epoch)
+                    return;
+                this.#hydration = hydration;
                 this.#message = this.#hydration.warnings.length > 0 ? this.#hydration.warnings.join(" ") : "Computed preview refreshed.";
                 this.#messageKind = "status";
             }
             catch (error) {
-                this.#fail(error, "Could not compute this sheet.");
+                if (epoch === this.#epoch)
+                    this.#fail(error, "Could not compute this sheet.");
             }
             finally {
-                this.#busy = false;
-                this.#render();
+                if (epoch === this.#epoch) {
+                    this.#busy = false;
+                    this.#render();
+                }
             }
         }
         async #materialize() {
             const runtime = this.#runtime;
             const snapshot = this.#snapshot;
-            if (runtime === undefined || snapshot === undefined || !this.#canEdit() || this.#busy)
+            if (runtime === undefined || snapshot === undefined || !this.#canEdit() || this.#busy || this.#editor?.dirty)
                 return;
+            const epoch = this.#epoch;
             this.#busy = true;
             this.#render();
             try {
                 const hydration = await runtime.engine.hydrate(snapshot.state);
                 const materialized = this.#withClassFallback(materializeHydration(snapshot.state, hydration, runtime.engine.providerIdentity));
-                this.#snapshot = await runtime.repository.save(snapshot, (draft) => replaceState(draft, materialized));
+                if (epoch !== this.#epoch || !await this.#save((draft) => replaceState(draft, materialized)))
+                    return;
                 this.#hydration = hydration;
                 this.#message = "Computed fallback values saved.";
                 this.#messageKind = "status";
             }
             catch (error) {
-                this.#fail(error, "Could not refresh computed values.");
+                if (epoch === this.#epoch)
+                    this.#fail(error, "Could not refresh computed values.");
             }
             finally {
-                this.#busy = false;
-                this.#render();
+                if (epoch === this.#epoch) {
+                    this.#busy = false;
+                    this.#render();
+                }
             }
         }
         async #importFile(file) {
             if (!this.#canEdit() || this.#snapshot === undefined)
                 return;
+            const epoch = this.#epoch;
             try {
                 const imported = parseSheet(await file.text());
+                if (epoch !== this.#epoch)
+                    return;
                 await this.#save((draft) => replaceState(draft, imported));
-                this.#message = "Imported sheet saved.";
             }
             catch (error) {
-                this.#fail(error, "Could not import this sheet.");
-                this.#render();
+                if (epoch === this.#epoch) {
+                    this.#fail(error, "Could not import this sheet.");
+                    this.#render();
+                }
             }
         }
-        #canEdit() { return this.#contribution?.host.canEdit === true; }
+        #canEdit() { return this.#contribution?.host.canEdit === true && this.#editing; }
         #withClassFallback(state) {
             const selected = state.classes.filter((item) => typeof item["classId"] === "string" && item["classId"] !== "");
             if (selected.length === 0)
@@ -644,6 +762,7 @@ export function defineSheetElement() {
         #renderUnavailable(message) { this.replaceChildren(messageBlock(this.ownerDocument, message, "alert")); }
     }
     customElements.define(sheetElementTag, CharacterSheetElement);
+    return sheetElementTag;
 }
 function replaceState(target, source) { for (const key of Object.keys(target))
     delete target[key]; Object.assign(target, cloneSheet(source)); }

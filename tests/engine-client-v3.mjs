@@ -44,4 +44,31 @@ test("materialization updates durable fallback fields while preserving play stat
   assert.equal(result.skillExpertise.athletics, true);
   assert.equal(result.inventory[0].name, "Rope");
   assert.equal(result.ruleset, "2024");
+  assert.equal(result.baseStats.STR, 10);
+});
+
+test("catalog queries unwrap public record envelopes and keep stable identities", async () => {
+  let calls = 0;
+  const client = new RulesEngineClient({ available: true, providers: [], call: async (_method, params) => {
+    calls++;
+    if (calls === 1) return { records: [{ id: 'fighter', kind: 'class', value: { name: 'Fighter', hitDie: 'd10' } }], nextCursor: 'next' };
+    assert.equal(params.cursor, 'next'); return { records: [{ id: 'wizard', kind: 'class', value: { name: 'Wizard' } }] };
+  } }, new AbortController().signal);
+  assert.deepEqual(await client.queryAll('class'), [{ id: 'fighter', kind: 'class', name: 'Fighter', hitDie: 'd10' }, { id: 'wizard', kind: 'class', name: 'Wizard' }]);
+});
+
+test("recalculation retains base scores, combat snapshots and authored spell metadata", () => {
+  const sheet = blankSheet(); sheet.abilities.INT = 16; sheet.hp = 9;
+  sheet.cantrips.wizard = ['light']; sheet.spells = [{ id: 'snapshot:light', name: 'Light', level: 0, school: 'Evocation', prepared: false, origin: 'snapshot', notes: 'My version' }];
+  sheet.resourceUses['slot-1'] = 2;
+  const hydration = { identity: { edition: '2024' }, warnings: [], sheet: {
+    abilities: { INT: { score: 18 } }, derived: { maxHp: 20 }, resources: [{ key: 'slot-1', max: 3 }],
+    weapons: [{ name: 'Staff', damage: '1d6+1' }], activations: [{ key: 'ward' }], spellcasting: { perClass: [{ classId: 'wizard' }] },
+  } };
+  const first = materializeHydration(sheet, hydration), second = materializeHydration(first, hydration);
+  assert.equal(second.baseStats.INT, 16); assert.equal(second.abilities.INT, 18);
+  assert.equal(second.spells[0].name, 'Light'); assert.equal(second.spells[0].prepared, false); assert.equal(second.spells[0].notes, 'My version');
+  assert.equal(second.resourceUses['slot-1'], 2); assert.equal(second.rulesProvider.materialized.weapons[0].name, 'Staff');
+  assert.deepEqual(second.rulesProvider.materialized.resources, hydration.sheet.resources);
+  assert.throws(() => materializeHydration(sheet, { sheet: {}, warnings: ['Provider missing'] }), /Provider missing/);
 });

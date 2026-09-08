@@ -45,8 +45,13 @@ test("compiled v3 entry binds one additive section and disposes cleanly", async 
     assert.deepEqual(extensionCalls, [{ target: "characters", id: "dnd-sheets" }]);
     assert.equal(serviceConnect.contract, "dnd5e.rules-engine");
     assert.equal(serviceConnect.options.range, "^3.0.0");
-    assert.deepEqual(bindings.map(entry => ({ id: entry.id, tag: entry.binding.tag })), [{ id: "sheet.section", tag: "dnd-character-sheet" }]);
-    assert.ok(definitions.has("dnd-character-sheet"));
+    const firstTag = `dnd-character-sheet-${context.addon.generation}`;
+    assert.deepEqual(bindings.map(entry => ({ id: entry.id, tag: entry.binding.tag })), [{ id: "sheet.section", tag: firstTag }]);
+    assert.ok(definitions.has(firstTag));
+    const updated = await activate({ ...context, addon: { ...context.addon, generation: "b".repeat(64) }, services: { connect: async () => { throw new Error("offline"); } } });
+    assert.notEqual(bindings[1].binding.tag, firstTag);
+    assert.notEqual(definitions.get(firstTag), definitions.get(bindings[1].binding.tag));
+    updated.dispose();
     disposable.dispose();
     assert.equal(bindings[0].disposed, true);
     disposable.dispose();

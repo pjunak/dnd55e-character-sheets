@@ -24,7 +24,8 @@ migration.
   normalization. Preserve unknown JSON fields so one-time conversion and
   homebrew data remain lossless.
 - `sheet-repository.ts` is the only persistent record-extension boundary.
-  Writes use optimistic revisions; conflicts reload instead of overwriting.
+  Writes use optimistic revisions; conflicts retain the local draft for export
+  and explicit reload instead of overwriting concurrent changes.
 - `engine-client.ts` is the only rules-engine boundary. Requests and responses
   stay serializable and versioned. Never name a provider add-on in runtime
   policy.

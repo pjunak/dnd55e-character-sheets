@@ -62,6 +62,7 @@ export interface RecordContributionHostContext {
 }
 
 export interface ContributionContext {
+  readonly edits: { set(state: { readonly dirty: boolean; readonly saving: boolean }): void };
   readonly addon: { readonly id: string; readonly generation: string };
   readonly contribution: { readonly id: string; readonly config: Readonly<Record<string, unknown>> };
   readonly signal: AbortSignal;

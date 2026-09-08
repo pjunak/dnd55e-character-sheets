@@ -25,9 +25,18 @@ A structural or choice edit follows one path:
 5. save the new decisions and fallback values in one revisioned extension
    write.
 
-If any service call fails, nothing is persisted. If the stored extension
-revision changed, the package reloads the newest state and asks the user to
-repeat the edit. It never silently overwrites concurrent play changes.
+If a service call fails before the write, nothing is persisted. Missing rules
+data cannot materialize a partial universal result over saved values. A failed
+post-save Builder-plan refresh leaves the successful write intact and allows
+the Builder to be loaded again.
+
+Ordinary edits update a mount-owned draft immediately and serialize writes
+against acknowledged revisions. Failed writes retain that draft and pause
+automatic retries. A conflict offers draft export and explicit reload; a
+transient failure also offers Retry. An uncertain write may conflict on retry
+and is never treated as permission to overwrite. Dirty and saving flags use
+the host's navigation guard. They do not persist drafts across a forced browser
+close or generation teardown. Late responses cannot update a different sheet.
 
 ## Durable fallback and authored play state
 
@@ -36,6 +45,12 @@ class, initiative, speed, proficiency bonus, save/skill proficiency, expertise,
 trait snapshots, and engine-derived spell snapshots. It preserves current HP
 within the new maximum, temporary HP, manually entered spells, inventory,
 currency, resources, and notes.
+
+The first materialization freezes the original ability inputs in `baseStats`
+so repeated calculation does not apply grants twice. Existing spell snapshot
+labels, annotations and prepared flags survive. Saved combat display includes
+attacks, resource definitions, activations and attunement; tracker values stay
+in authored `resourceUses` and manual resources remain independent.
 
 The materialization marker stores both engine binding identity and rules-data
 identity. The package does not automatically recompute merely because a page
@@ -53,7 +68,14 @@ the rollback source until both conversions are verified.
 
 ## Presentation
 
-The package owns one scoped built-in presentation. The v2
+The package owns scoped Compact and Classic presentations. Their per-character
+browser preference uses the original renderer/layout keys; no sheet data
+changes when switching layouts. Ability cards, vitals and the split backpack
+use the preserved v1 theme primitives. Settings retains manual identity and
+resource editing. Host `canEdit` remains authoritative, including the current
+host policy allowing authenticated players to edit.
+
+The v2
 `dnd-sheets.renderer` service was removed because it exchanged live browser
 objects and HTML rather than a serializable, schema-validated contract. This
 reduces authority, lifecycle coupling, and failure modes without affecting

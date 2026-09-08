@@ -9,6 +9,10 @@ lore, relationships, routing, and authorization.
 
 - Directly editable identity, abilities, saves, skills, vitals, resources,
   spells, inventory, currency, and notes.
+- Compact and Classic ability-card layouts, a vitals strip and split backpack,
+  with the original per-character layout preference and an explicit edit mode.
+- Saved attacks and resource counters alongside hand-entered play resources.
+- Retained drafts after failed writes, explicit retry/reload and draft export.
 - A useful read-only view for players without edit authority.
 - Versioned per-sheet JSON export and import.
 - An optional guided Builder through `dnd5e.rules-engine` v3.
@@ -38,7 +42,9 @@ those values as well.
 
 - `src/index.ts` activates the generation, connects the optional service, and
   binds the declared section.
-- `src/sheet-element.ts` owns presentation and browser interaction.
+- `src/sheet-element.ts` owns the mounted section and browser interaction.
+- `src/play-view.ts` owns ability cards, vitals, backpack and combat display.
+- `src/sheet-editor.ts` owns draft retention and save sequencing.
 - `src/sheet-state.ts` owns defaults, forward normalization, and manual math.
 - `src/sheet-repository.ts` owns revisioned record-extension persistence.
 - `src/engine-client.ts` is the only rules-engine service boundary.
