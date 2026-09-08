@@ -30,7 +30,7 @@
       "roles": ["dm", "player"],
       "order": 100,
       "requires": ["ui.contributions"],
-      "config": { "collection": "characters" }
+      "config": { "collection": "characters", "labels": { "cs": "Deník postavy D&D" } }
     }
   ],
   "recordExtensions": [

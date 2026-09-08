@@ -11,7 +11,7 @@ test("manifest preserves the data namespace and optional engine boundary", async
   assert.equal(manifest.services.consumes[0].contract, "dnd5e.rules-engine");
   assert.equal(manifest.services.consumes[0].required, false);
   assert.equal(manifest.contributions[0].surface, "article-section");
-  assert.deepEqual(manifest.contributions[0].config, { collection: "characters" });
+  assert.deepEqual(manifest.contributions[0].config, { collection: "characters", labels: { cs: "Deník postavy D&D" } });
 });
 
 test("packaged sheet schema deliberately retains unknown legacy fields", async () => {

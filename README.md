@@ -34,6 +34,7 @@ lore, relationships, routing, and authorization.
 - English/Czech navigation, play controls, Builder, equipment and spell tools,
   reviews, settings, save recovery and diagnostics, using the host language
   preference. Authored names, notes and provider content keep their language.
+- A localized host-owned section heading through reviewed contribution metadata.
 
 The package does not implement D&D rules or carry rulebook data. Those belong
 to the selected rules engine and its selected rules-data provider. Missing or
