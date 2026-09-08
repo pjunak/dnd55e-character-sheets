@@ -10,9 +10,11 @@ import { equipmentKinds, equipmentPicker, foundationEditor, playReview, restCont
 import { copySpellForm, grantedSpells, spellSwapHistory, swapSpellForm } from "./spell-tools.js";
 import { equipmentCandidates, equipInventory, type EquipmentSlot } from "./equipment-state.js";
 import { builderProgress, builderSummary, builderTabs, extraFeatForm, extraFeats, type BuilderTarget } from "./builder-view.js";
+import { sheetText, type SheetMessageKey } from "./sheet-catalogs.js";
+import { providerStatus } from "./provider-view.js";
 
 type Tab = "sheet" | "combat" | "spells" | "builder" | "notes" | "tools";
-const tabs: readonly (readonly [Tab, string])[] = [["sheet", "Character Sheet"], ["combat", "Combat"], ["spells", "Spellbook"], ["notes", "Notes"], ["builder", "Builder"], ["tools", "Settings"]];
+const tabs: readonly (readonly [Tab, SheetMessageKey])[] = [["sheet", "tab.sheet"], ["combat", "tab.combat"], ["spells", "tab.spells"], ["notes", "tab.notes"], ["builder", "tab.builder"], ["tools", "tab.tools"]];
 
 export function defineSheetElement(generation: string): string {
   const sheetElementTag = `dnd-character-sheet-${generation}`;
@@ -51,12 +53,16 @@ export function defineSheetElement(generation: string): string {
     #builderTab = "character";
     #builderLevel = "";
     #builderRailOpen = true;
+    #providerRequest: AbortController | undefined;
+    #checkingRules = false;
+    #t(key: SheetMessageKey): string { return sheetText(this.#contribution?.host.locale, key); }
 
     set codexContribution(value: ContributionContext) {
       const previous = this.#contribution;
       this.#contribution = value;
       if (this.isConnected) {
         if (previous?.host.key !== value.host.key || previous?.host.canEdit !== value.host.canEdit) void this.#connect();
+        else if (previous?.host.locale !== value.host.locale) this.#render(true);
         else this.#publishEdits();
       }
     }
@@ -68,7 +74,7 @@ export function defineSheetElement(generation: string): string {
         this.#changingControl = true;
         setTimeout(() => { this.#changingControl = false; if (this.isConnected && this.#deferredRender) this.#render(true); }, 0);
       }, true);
-      this.addEventListener("input", event => { if (this.#canEdit() && event.target instanceof HTMLElement && !event.target.closest(".dnd-builder-choices, .dnd-builder-classes, .dnd-spell-browser") && event.target.getAttribute("aria-label") !== "Sheet layout") { this.#typing = true; this.#publishEdits(); } });
+      this.addEventListener("input", event => { if (this.#canEdit() && event.target instanceof HTMLElement && !event.target.closest(".dnd-builder-choices, .dnd-builder-classes, .dnd-spell-browser") && !event.target.hasAttribute("data-sheet-layout")) { this.#typing = true; this.#publishEdits(); } });
       // Focus settles after blur/change. Replacing controls inside focusout can cancel the pending click.
       this.addEventListener("focusout", () => { setTimeout(() => { if (this.isConnected && this.#deferredRender && !this.contains(this.ownerDocument.activeElement)) this.#render(); }, 0); });
     }
@@ -79,6 +85,7 @@ export function defineSheetElement(generation: string): string {
       void this.#connect();
     }
     disconnectedCallback(): void {
+      this.#providerRequest?.abort(); this.#providerRequest = undefined;
       this.#closeDialog();
       this.#epoch++; this.#editor?.dispose(); this.#runtime = undefined; this.#pointerDown = false;
       this.ownerDocument.removeEventListener("pointerup", this.#releasePointer);
@@ -90,6 +97,7 @@ export function defineSheetElement(generation: string): string {
     };
 
     async #connect(): Promise<void> {
+      this.#providerRequest?.abort(); this.#providerRequest = undefined; this.#checkingRules = false;
       this.#closeDialog();
       const epoch = ++this.#epoch;
       this.#editor?.dispose(); this.#editor = undefined; this.#typing = false;
@@ -121,7 +129,7 @@ export function defineSheetElement(generation: string): string {
         if (epoch !== this.#epoch) return;
         this.#editor = new SheetEditor(runtime.repository, snapshot, () => { if (epoch === this.#epoch) { this.#publishEdits(); this.#render(true); } });
       }
-      catch (error) { if (epoch === this.#epoch) this.#fail(error, "Could not load this character sheet."); }
+      catch (error) { if (epoch === this.#epoch) this.#fail(error, this.#t("load.failed")); }
       finally { if (epoch === this.#epoch) { this.#busy = false; this.#publishEdits(); this.#render(); } }
     }
 
@@ -136,8 +144,8 @@ export function defineSheetElement(generation: string): string {
       this.#requestedRender = false;
       const snapshot = this.#snapshot;
       if (snapshot === undefined) {
-        if (this.#busy) this.replaceChildren(messageBlock(this.ownerDocument, "Loading character sheet…", "status"));
-        else this.#renderUnavailable(this.#message || "Could not load this character sheet.");
+        if (this.#busy) this.replaceChildren(messageBlock(this.ownerDocument, this.#t("load.sheet"), "status"));
+        else this.#renderUnavailable(this.#message || this.#t("load.failed"));
         return;
       }
       const document = this.ownerDocument;
@@ -147,15 +155,15 @@ export function defineSheetElement(generation: string): string {
       heading.className = "dnd-sheet-heading";
       const title = document.createElement("div");
       const h2 = document.createElement("h2");
-      h2.textContent = snapshot.state.className || "D&D Character Sheet";
+      h2.textContent = snapshot.state.className || this.#t("sheet.title");
       const subtitle = document.createElement("p");
       subtitle.textContent = identityLine(snapshot.state);
       title.append(h2, subtitle);
-      const engine = document.createElement("span");
-      engine.className = `dnd-sheet-engine ${this.#runtime?.engine.available === true ? "available" : "standalone"}`;
-      engine.textContent = this.#runtime?.engine.available === true ? "Rules engine connected" : "Standalone";
+      const engine = actionButton(document, this.#t(`providers.${this.#runtime!.engine.diagnostics.status}`), () => {
+        this.#tab = "tools"; this.#render(); this.querySelector<HTMLElement>(".dnd-provider-status")?.focus({ preventScroll: false });
+      }, undefined, this.#busy); engine.className = "dnd-sheet-engine"; engine.title = this.#t("providers.title");
       heading.append(title, engine);
-      if (this.#contribution?.host.canEdit) heading.append(actionButton(document, this.#editing ? "Done editing" : "Edit sheet", () => {
+      if (this.#contribution?.host.canEdit) heading.append(actionButton(document, this.#t(this.#editing ? "sheet.done" : "sheet.edit"), () => {
         if (this.#busy || this.#editor?.dirty) return;
         this.#editing = !this.#editing; this.#render();
       }, "small", this.#busy || this.#editor?.dirty === true));
@@ -182,26 +190,35 @@ export function defineSheetElement(generation: string): string {
     #updateStatus(): void {
       const area = this.querySelector(".dnd-save-status"); if (area === null) return;
       const editor = this.#editor;
-      const signature = JSON.stringify([editor?.error === undefined ? null : errorStatus(editor.error) ?? "failed", editor?.saving, editor?.dirty, this.#message, this.#messageKind]);
+      const signature = JSON.stringify([this.#contribution?.host.locale, editor?.error === undefined ? null : errorStatus(editor.error) ?? "failed", editor?.saving, editor?.dirty, this.#message, this.#messageKind]);
       if (area.getAttribute("data-status") === signature) return;
       area.setAttribute("data-status", signature);
       area.replaceChildren();
       if (editor?.error !== undefined) {
         const conflict = errorStatus(editor.error) === 409;
-        area.append(messageBlock(this.ownerDocument, conflict ? "The sheet changed elsewhere. Your edits are kept here. Export your draft before reloading the saved sheet." : "Could not save. Your edits are kept here; retry when the connection is available.", "alert"));
-        area.append(actionButton(this.ownerDocument, "Export draft", () => downloadSheet(editor.snapshot.state)), actionButton(this.ownerDocument, "Reload saved sheet", () => void this.#connect()));
-        if (!conflict) area.append(actionButton(this.ownerDocument, "Retry save", () => void editor.save()));
-      } else if (editor?.saving) area.append(messageBlock(this.ownerDocument, "Saving…", "status"));
-      else if (editor?.dirty) area.append(messageBlock(this.ownerDocument, "Unsaved changes.", "status"));
+        area.append(messageBlock(this.ownerDocument, this.#t(conflict ? "save.conflict" : "save.failed"), "alert"));
+        area.append(actionButton(this.ownerDocument, this.#t("save.export"), () => downloadSheet(editor.snapshot.state)), actionButton(this.ownerDocument, this.#t("save.reload"), () => void this.#connect()));
+        if (!conflict) area.append(actionButton(this.ownerDocument, this.#t("save.retry"), () => void this.#retrySave()));
+      } else if (editor?.saving) area.append(messageBlock(this.ownerDocument, this.#t("save.saving"), "status"));
+      else if (editor?.dirty) area.append(messageBlock(this.ownerDocument, this.#t("save.dirty"), "status"));
       else if (this.#message) area.append(messageBlock(this.ownerDocument, this.#message, this.#messageKind));
+    }
+
+    async #retrySave(): Promise<void> {
+      const editor = this.#editor, epoch = this.#epoch;
+      if (!editor) return;
+      const saved = await editor.save();
+      if (epoch !== this.#epoch) return;
+      if (saved) { this.#message = this.#t("save.saved"); this.#messageKind = "status"; }
+      this.#render(true);
     }
 
     #renderTabs(document: Document): HTMLElement {
       const navigation = document.createElement("nav");
       navigation.className = "dnd-sheet-tabs codex-tab-strip"; navigation.setAttribute("role", "tablist");
-      navigation.setAttribute("aria-label", "Character sheet sections");
+      navigation.setAttribute("aria-label", this.#t("sheet.sections"));
       for (const [id, label] of tabs) {
-        const item = actionButton(document, label, () => { this.#tab = id; this.#message = ""; this.#render(); });
+        const item = actionButton(document, this.#t(label), () => { this.#tab = id; this.#message = ""; this.#render(); });
         item.className = `codex-tab${id === this.#tab ? " is-active" : ""}${id === "builder" || id === "tools" ? " codex-tab-tool" : ""}`;
         item.id = `dnd-tab-${id}`; item.setAttribute("role", "tab"); item.setAttribute("aria-selected", String(id === this.#tab)); item.setAttribute("aria-controls", `dnd-panel-${id}`); item.tabIndex = id === this.#tab ? 0 : -1;
         item.addEventListener("keydown", event => {
@@ -251,14 +268,14 @@ export function defineSheetElement(generation: string): string {
 
     #renderBuilder(panel: HTMLElement, state: SheetState): void {
       const document = panel.ownerDocument;
-      const section = card(document, "Guided builder");
+      const section = card(document, this.#t("builder.title"));
       if (this.#runtime?.engine.available !== true) {
-        section.append(messageBlock(document, "No compatible rules engine is selected. The rest of the sheet remains fully editable.", "status")); panel.append(section); return;
+        section.append(messageBlock(document, this.#t(this.#runtime?.engine.diagnostics.status === "missing-engine" ? "builder.standalone" : "providers.manualHelp"), "status"), this.#providerStatus()); panel.append(section); return;
       }
       const intro = document.createElement("p"); intro.textContent = "Build your character and review its choices here. Equipment, notes and resources stay with the sheet.";
       section.append(intro);
       if (this.#builderPlan === undefined) {
-        section.append(actionButton(document, this.#busy ? "Loading…" : "Load builder", () => void this.#loadBuilder(), undefined, this.#busy)); panel.append(section); return;
+        section.append(actionButton(document, this.#t(this.#busy ? "builder.loading" : "builder.load"), () => void this.#loadBuilder(), undefined, this.#busy), this.#providerStatus()); panel.append(section); return;
       }
       const guidance = this.#builderGuidance ?? {}, classGuidance = asRecords(guidance["classes"]);
       if (this.#builderTab !== "character" && !classGuidance.some(value => value["classId"] === this.#builderTab)) this.#builderTab = "character";
@@ -351,48 +368,69 @@ export function defineSheetElement(generation: string): string {
 
     #renderTools(panel: HTMLElement, state: SheetState): void {
       const document = panel.ownerDocument;
-      const presentation = card(document, "Presentation");
-      const layout = document.createElement("select"); layout.setAttribute("aria-label", "Sheet layout");
-      layout.append(option(document, "compact", "Compact"), option(document, "classic", "Classic")); layout.value = this.#layout;
+      const presentation = card(document, this.#t("tools.presentation"));
+      const layout = document.createElement("select"); layout.setAttribute("aria-label", this.#t("tools.layout")); layout.dataset["sheetLayout"] = "";
+      layout.append(option(document, "compact", this.#t("tools.compact")), option(document, "classic", this.#t("tools.classic"))); layout.value = this.#layout;
       layout.addEventListener("change", () => {
         this.#layout = layout.value === "classic" ? "classic" : "compact";
         try { this.ownerDocument.defaultView?.localStorage.setItem(`dse-ui:renderer:${this.#snapshot?.key}`, `builtin:${this.#layout}`); } catch { /* This view still changes when browser storage is disabled. */ }
         layout.blur(); this.#typing = false; this.#render();
       }); presentation.append(layout);
-      const identity = card(document, "Identity");
+      const identity = card(document, this.#t("tools.identity"));
       const fields = document.createElement("div"); fields.className = "dnd-sheet-form-grid";
       fields.append(
-        this.#textField("Player", state.player, (draft, value) => { draft.player = value; }),
-        this.#textField("Class", state.className, (draft, value) => { draft.className = value; }),
-        this.#textField("Subclass", state.subclass, (draft, value) => { draft.subclass = value; }),
-        this.#numberField("Level", state.level, (draft, value) => { draft.level = Math.max(1, Math.trunc(value)); }, 1),
-        this.#textField("Species", state.species || state.race, (draft, value) => { draft.species = value; draft.race = value; }),
-        this.#textField("Background", state.background, (draft, value) => { draft.background = value; }),
-        this.#textField("Alignment", state.alignment, (draft, value) => { draft.alignment = value; }),
-        this.#numberField("Initiative", state.initiative, (draft, value) => { draft.initiative = value; }),
+        this.#textField(this.#t("field.player"), state.player, (draft, value) => { draft.player = value; }),
+        this.#textField(this.#t("field.class"), state.className, (draft, value) => { draft.className = value; }),
+        this.#textField(this.#t("field.subclass"), state.subclass, (draft, value) => { draft.subclass = value; }),
+        this.#numberField(this.#t("field.level"), state.level, (draft, value) => { draft.level = Math.max(1, Math.trunc(value)); }, 1),
+        this.#textField(this.#t("field.species"), state.species || state.race, (draft, value) => { draft.species = value; draft.race = value; }),
+        this.#textField(this.#t("field.background"), state.background, (draft, value) => { draft.background = value; }),
+        this.#textField(this.#t("field.alignment"), state.alignment, (draft, value) => { draft.alignment = value; }),
+        this.#numberField(this.#t("field.initiative"), state.initiative, (draft, value) => { draft.initiative = value; }),
       ); identity.append(fields);
-      const resources = card(document, "Manual resources"); resources.append(this.#resourceTable(state.resources));
-      if (this.#canEdit()) resources.append(actionButton(document, "Add resource", () => void this.#save(draft => { draft.resources.push({ id: createId("resource"), name: "New resource", current: 1, max: 1 }); })));
-      panel.append(presentation, identity, resources);
-      const engine = card(document, "Rules state");
-      const mode = document.createElement("p"); mode.textContent = state.rulesMode === "manual" ? "Manual values are authoritative." : "Engine values may be refreshed explicitly; stored fallback values remain authoritative between refreshes.";
+      const resources = card(document, this.#t("tools.resources")); resources.append(this.#resourceTable(state.resources));
+      if (this.#canEdit()) resources.append(actionButton(document, this.#t("tools.addResource"), () => void this.#save(draft => { draft.resources.push({ id: createId("resource"), name: "New resource", current: 1, max: 1 }); })));
+      panel.append(presentation, identity, resources, this.#providerStatus());
+      const engine = card(document, this.#t("tools.rules"));
+      const mode = document.createElement("p"); mode.textContent = this.#t(state.rulesMode === "manual" ? "tools.manual" : "tools.auto");
       engine.append(mode);
-      if (this.#runtime?.engine.available === true) engine.append(actionButton(document, "Preview computed values", () => void this.#previewHydration(), undefined, this.#busy));
+      if (this.#runtime?.engine.available === true) engine.append(actionButton(document, this.#t("tools.preview"), () => void this.#previewHydration(), undefined, this.#busy));
       if (this.#hydration !== undefined) {
         const pre = document.createElement("pre"); pre.className = "dnd-sheet-computed"; pre.textContent = computedSummary(this.#hydration);
         engine.append(pre);
-        if (this.#canEdit()) engine.append(actionButton(document, "Apply computed fallback values", () => void this.#materialize(), "primary", this.#busy));
+        if (this.#canEdit() && this.#hydration.identity) engine.append(actionButton(document, this.#t("tools.apply"), () => void this.#materialize(), "primary", this.#busy));
       }
-      const transfer = card(document, "Transfer this sheet");
-      const explanation = document.createElement("p"); explanation.textContent = "Export or import this character's D&D sheet, including equipment and notes. The character's story and portrait stay in the article.";
-      transfer.append(explanation, actionButton(document, "Export JSON", () => downloadSheet(state)));
+      const transfer = card(document, this.#t("tools.transfer"));
+      const explanation = document.createElement("p"); explanation.textContent = this.#t("tools.transferHelp");
+      transfer.append(explanation, actionButton(document, this.#t("tools.export"), () => downloadSheet(state)));
       if (this.#canEdit()) {
         const input = document.createElement("input"); input.type = "file"; input.accept = "application/json,.json";
-        input.setAttribute("aria-label", "Import sheet JSON");
+        input.setAttribute("aria-label", this.#t("tools.import"));
         input.addEventListener("change", () => { const file = input.files?.[0]; if (file !== undefined) void this.#importFile(file); });
         transfer.append(input);
       }
       panel.append(engine, transfer);
+    }
+
+    #providerStatus(): HTMLElement { return providerStatus(this.ownerDocument, this.#runtime!.engine, this.#snapshot!.state, this.#contribution?.host.locale, this.#checkingRules || this.#busy, () => void this.#checkRules()); }
+    async #checkRules(): Promise<void> {
+      const runtime = this.#runtime, contribution = this.#contribution;
+      if (!runtime || !contribution || this.#busy || this.#editor?.saving) return;
+      const epoch = this.#epoch, request = new AbortController(); this.#providerRequest?.abort(); this.#providerRequest = request;
+      this.#busy = true; this.#checkingRules = true; this.#render();
+      try {
+        const engine = await runtime.connectEngine(AbortSignal.any([request.signal, contribution.signal]));
+        await engine.inspect();
+        if (epoch !== this.#epoch || request.signal.aborted) return;
+        // Replace only this mounted sheet's connection; an older request keeps
+        // its own provider identity and another mount's connection is untouched.
+        this.#runtime = { ...runtime, engine };
+        this.#hydration = undefined; this.#builderPlan = undefined; this.#builderGuidance = undefined;
+        this.#classRecords = []; this.#subclassRecords = []; this.#featRecords = [];
+        this.#speciesRecords = []; this.#backgroundRecords = [];
+        this.#spellRecords = undefined; this.#spellOptions = undefined; this.#equipmentRecords = [];
+      } catch (error) { if (epoch === this.#epoch && !request.signal.aborted) this.#fail(error, this.#t("providers.connection-error")); }
+      finally { if (epoch === this.#epoch && !request.signal.aborted) { this.#busy = false; this.#checkingRules = false; this.#render(); } }
     }
 
     #classRow(selected: Record<string, unknown>, index: number): HTMLElement {
@@ -541,7 +579,7 @@ export function defineSheetElement(generation: string): string {
       this.#render();
       const saved = await pending;
       if (editor !== this.#editor) return false;
-      if (saved) { this.#message = "Saved."; this.#messageKind = "status"; }
+      if (saved) { this.#message = this.#t("save.saved"); this.#messageKind = "status"; }
       this.#publishEdits(); this.#render(true); return saved;
     }
 

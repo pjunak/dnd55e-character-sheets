@@ -1,5 +1,6 @@
-import type { ServiceHandle } from "./sdk.js";
+import type { AddonContext, ServiceHandle } from "./sdk.js";
 import { cloneSheet, normalizeSheet, type Ability, type SheetState, abilities } from "./sheet-state.js";
+import { serviceFailure, type RulesDiagnostics, type RulesStatus } from "./rules-status.js";
 
 export interface EngineIdentity extends Record<string, unknown> { readonly edition?: string }
 export interface Hydration { readonly sheet: Record<string, unknown>; readonly warnings: readonly string[]; readonly identity?: EngineIdentity }
@@ -31,8 +32,13 @@ export interface PlayResult extends Hydration { readonly available: boolean; rea
 export class RulesEngineClient {
   readonly #handle: ServiceHandle;
   readonly #signal: AbortSignal;
+  #diagnostics: RulesDiagnostics;
 
-  constructor(handle: ServiceHandle, signal: AbortSignal) { this.#handle = handle; this.#signal = signal; }
+  constructor(handle: ServiceHandle, signal: AbortSignal, discoveryError?: unknown) {
+    this.#handle = handle; this.#signal = signal;
+    this.#diagnostics = discoveryError === undefined ? { status: handle.available ? "unchecked" : "missing-engine", errors: [] } : { ...serviceFailure(discoveryError), status: "connection-error" };
+  }
+  get diagnostics(): RulesDiagnostics { return structuredClone(this.#diagnostics); }
   get available(): boolean { return this.#handle.available; }
   get providerLabel(): string { return this.#handle.providers[0]?.addonId ?? "not connected"; }
   get providerIdentity(): Readonly<Record<string, unknown>> {
@@ -45,28 +51,57 @@ export class RulesEngineClient {
     };
   }
 
+  async inspect(): Promise<RulesDiagnostics> {
+    this.#signal.throwIfAborted();
+    if (!this.available) { this.#diagnostics = { ...this.#diagnostics, checkedAt: Date.now() }; return this.diagnostics; }
+    await this.#call("context", {}, 6_000).catch(() => { this.#signal.throwIfAborted(); });
+    return this.diagnostics;
+  }
+
+  async #call<T>(method: string, params: unknown, deadlineMs: number): Promise<T> {
+    try {
+      const result = await this.#handle.call<T>(method, params, { deadlineMs, signal: this.#signal });
+      this.#signal.throwIfAborted();
+      const value = asRecord(result), status = value["status"];
+      if (["ready", "missing", "unavailable", "incompatible", "stale"].includes(String(status))) {
+        this.#diagnostics = { status: status as RulesStatus, checkedAt: Date.now(), errors: Array.isArray(value["errors"]) ? value["errors"].filter((error): error is string => typeof error === "string") : [], ...(value["available"] === true ? { identity: structuredClone(asRecord(value["identity"])) } : {}) };
+      } else if (method === "hydrate") {
+        const identity = value["identity"];
+        this.#diagnostics = identity ? { status: "ready", identity: structuredClone(asRecord(identity)), checkedAt: Date.now(), errors: [] }
+          : { status: "unavailable", checkedAt: Date.now(), errors: Array.isArray(value["warnings"]) ? value["warnings"].filter((warning): warning is string => typeof warning === "string") : [] };
+      }
+      return result;
+    } catch (error) {
+      this.#signal.throwIfAborted();
+      const failure = serviceFailure(error);
+      // Rejected character choices do not mean the provider went offline.
+      if (method === "context" || failure.code !== "INVALID_REQUEST") this.#diagnostics = { ...failure, checkedAt: Date.now() };
+      throw error;
+    }
+  }
+
   hydrate(decisions: SheetState): Promise<Hydration> {
-    return this.#handle.call("hydrate", { contractVersion: "rules-engine-hydrate.v1", decisions }, { deadlineMs: 15_000, signal: this.#signal });
+    return this.#call("hydrate", { contractVersion: "rules-engine-hydrate.v1", decisions }, 15_000);
   }
 
   playChange(decisions: SheetState, change: PlayChange): Promise<PlayResult> {
-    return this.#handle.call("apply-play-change", { contractVersion: "rules-engine-play-change.v1", decisions, change }, { deadlineMs: 15_000, signal: this.#signal });
+    return this.#call("apply-play-change", { contractVersion: "rules-engine-play-change.v1", decisions, change }, 15_000);
   }
 
   spellOptions(decisions: SheetState): Promise<PlayResult> {
-    return this.#handle.call("spell-options", { contractVersion: "rules-engine-spell-options.v1", decisions }, { deadlineMs: 15_000, signal: this.#signal });
+    return this.#call("spell-options", { contractVersion: "rules-engine-spell-options.v1", decisions }, 15_000);
   }
 
   builderPlan(decisions: SheetState): Promise<BuilderPlanResult> {
-    return this.#handle.call("builder-plan", { contractVersion: "rules-engine-builder-plan.v1", decisions }, { deadlineMs: 15_000, signal: this.#signal });
+    return this.#call("builder-plan", { contractVersion: "rules-engine-builder-plan.v1", decisions }, 15_000);
   }
 
   applyChoice(decisions: SheetState, change: { readonly choiceId: string; readonly slot?: number; readonly value: unknown }): Promise<{ readonly available: boolean; readonly decisions: Record<string, unknown>; readonly errors: readonly string[] }> {
-    return this.#handle.call("apply-builder-choice", { contractVersion: "rules-engine-builder-change.v1", decisions, change }, { deadlineMs: 15_000, signal: this.#signal });
+    return this.#call("apply-builder-choice", { contractVersion: "rules-engine-builder-change.v1", decisions, change }, 15_000);
   }
 
   reconcile(decisions: SheetState): Promise<{ readonly available: boolean; readonly decisions: Record<string, unknown>; readonly errors: readonly string[] }> {
-    return this.#handle.call("reconcile-builder-decisions", { contractVersion: "rules-engine-builder-reconcile.v1", decisions }, { deadlineMs: 15_000, signal: this.#signal });
+    return this.#call("reconcile-builder-decisions", { contractVersion: "rules-engine-builder-reconcile.v1", decisions }, 15_000);
   }
 
   async queryAll(kind: string): Promise<readonly RuleRecord[]> {
@@ -75,13 +110,24 @@ export class RulesEngineClient {
     do {
       const request: Record<string, unknown> = { contractVersion: "rules-engine-query.v1", kind, limit: 200 };
       if (cursor !== undefined) request["cursor"] = cursor;
-      const page = await this.#handle.call<{ readonly records: readonly RuleRecord[]; readonly nextCursor?: string }>("query-records", request, { deadlineMs: 6_000, signal: this.#signal });
+      const page = await this.#call<{ readonly records: readonly RuleRecord[]; readonly nextCursor?: string }>("query-records", request, 6_000);
       for (const record of page.records) {
         records.push({ ...asRecord(record["value"]), id: record.id, kind: record.kind });
       }
       cursor = page.nextCursor;
     } while (cursor !== undefined);
     return records;
+  }
+}
+
+export async function connectRulesEngine(context: AddonContext, viewSignal: AbortSignal = context.signal): Promise<RulesEngineClient> {
+  const signal = AbortSignal.any([context.signal, viewSignal]); signal.throwIfAborted();
+  try {
+    const service = await context.services.connect("dnd5e.rules-engine", { range: "^3.0.0", cardinality: "one", signal });
+    signal.throwIfAborted(); return new RulesEngineClient(service, signal);
+  } catch (error) {
+    signal.throwIfAborted();
+    return new RulesEngineClient({ available: false, providers: [], call: async () => { throw error; } }, signal, error);
   }
 }
 

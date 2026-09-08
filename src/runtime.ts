@@ -1,7 +1,7 @@
 import type { RulesEngineClient } from "./engine-client.js";
 import type { SheetRepository } from "./sheet-repository.js";
 
-export interface SheetRuntime { readonly repository: SheetRepository; readonly engine: RulesEngineClient; readonly signal: AbortSignal }
+export interface SheetRuntime { readonly repository: SheetRepository; readonly engine: RulesEngineClient; readonly connectEngine: (signal: AbortSignal) => Promise<RulesEngineClient>; readonly signal: AbortSignal }
 const generations = new Map<string, SheetRuntime>();
 
 export function registerRuntime(generation: string, runtime: SheetRuntime): () => void {

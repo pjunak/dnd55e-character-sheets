@@ -14,6 +14,23 @@ blocking the rest of the section.
 The sheet never branches on engine or compendium add-on IDs. Provider identity
 is diagnostic and reconciliation data, not runtime feature selection.
 
+The header opens Rules and providers in Settings. A selected engine starts
+unchecked; successful rule calls update the last observed status. Missing
+engines, failed discovery, missing/unavailable/incompatible rules data and
+stale bindings remain distinct. Check rules connection explicitly discovers a
+new handle and calls the engine's read-only `context` method with `{}`. It
+replaces only the mounted sheet's connection, invalidates computed previews
+and catalog caches, and retains the existing editor and failed-save draft.
+It neither saves nor automatically applies computed values. Requests are
+cancelled with the mount and never silently retry or select a provider by ID.
+
+Saved provenance compares engine identity, generation and binding revision
+plus data-provider identity, generation, content revision, ruleset and edition.
+A known mismatch is reported as changed; absent or sparse converted metadata
+is unverified. Missing live rules cannot verify a saved source. Users can
+inspect both identities in collapsed details and explicitly preview/apply new
+values. Partial hydration without a rules identity offers no Apply action.
+
 ## Builder writes are atomic from the user's perspective
 
 A structural or choice edit follows one path:
@@ -131,6 +148,13 @@ changes when switching layouts. Ability cards, vitals and the split backpack
 use the preserved v1 theme primitives. Settings retains manual identity and
 resource editing. Host `canEdit` remains authoritative, including the current
 host policy allowing authenticated players to edit.
+
+The optional public article context `locale` selects English or Czech for
+sheet navigation, Settings, save recovery and provider diagnostics; missing
+locale defaults to English. A context refresh preserves the mounted editor.
+Layout preferences keep their stable values in either language. The rest of
+the play/Builder text remains a separate catalog migration; authored and
+provider-supplied content is displayed as received.
 
 The v2
 `dnd-sheets.renderer` service was removed because it exchanged live browser

@@ -29,6 +29,11 @@ lore, relationships, routing, and authorization.
   reviewed spell copying with GP/scroll changes, and recorded known-spell swaps.
 - Durable materialized values after every successful Builder change, so a
   sheet remains useful when the engine or rules data is unavailable.
+- Rules connection status, explicit reconnect, and a comparison of current
+  providers with the source of saved computed values. Checking never writes.
+- English/Czech sheet navigation, settings, save recovery and diagnostics,
+  using the host language preference. Play and Builder content translation is
+  still in progress; authored names and notes keep their original language.
 
 The package does not implement D&D rules or carry rulebook data. Those belong
 to the selected rules engine and its selected rules-data provider. Missing or
@@ -64,6 +69,9 @@ those values as well.
 - `src/sheet-state.ts` owns defaults, forward normalization, and manual math.
 - `src/sheet-repository.ts` owns revisioned record-extension persistence.
 - `src/engine-client.ts` is the only rules-engine service boundary.
+- `src/rules-status.ts` compares saved provenance and classifies service failures;
+  `src/provider-view.ts` renders the connection summary and optional details.
+- `src/sheet-catalogs.ts` owns the English/Czech interface messages.
 - `src/sheet-transfer.ts` owns bounded per-sheet JSON transfer.
 - `contracts/sheet-state.schema.json` is the durable storage contract.
 

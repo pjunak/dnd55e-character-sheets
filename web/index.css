@@ -24,6 +24,18 @@
 .dnd-sheet-heading > div { margin-right:auto; }
 .dnd-sheet-heading > button { border:1px solid var(--border-subtle); background:var(--bg-raised); border-radius:var(--radius-sm); padding:var(--space-1) var(--space-2); color:var(--accent-gold); font-size:var(--text-xs); }
 .dnd-sheet-engine { color:var(--text-muted); font-size:var(--text-xs); }
+.dnd-sheet-heading .dnd-sheet-engine { max-width:22rem; text-align:left; white-space:normal; }
+.dnd-provider-status { scroll-margin-block:1rem; }
+.dnd-provider-status p { margin:0; }
+.dnd-provider-summary { color:var(--accent-gold); font-weight:600; }
+.dnd-provider-status > button { justify-self:start; }
+.dnd-provider-status details { min-width:0; }
+.dnd-provider-status summary { cursor:pointer; color:var(--text-muted); }
+.dnd-provider-status h4 { margin-block:var(--space-3) var(--space-2); }
+.dnd-provider-status dl { display:grid; grid-template-columns:minmax(7rem, 1fr) minmax(0, 2fr); gap:var(--space-1) var(--space-3); margin:0; font-size:var(--text-sm); }
+.dnd-provider-status dt { color:var(--text-muted); }
+.dnd-provider-status dd { margin:0; overflow-wrap:anywhere; }
+.dnd-provider-status li { overflow-wrap:anywhere; }
 .dnd-sheet-tabs { overflow-x:auto; max-width:100%; }
 .dnd-sheet-tabs button { flex-shrink:0; white-space:nowrap; }
 .dnd-sheet-tabs [id=dnd-tab-builder] { margin-left:auto; }
