@@ -74,6 +74,29 @@ items in one write, retains the host's dirty guard while staged, and supports
 custom entries when catalog calls fail. A failed commit leaves the resulting
 sheet draft available for the ordinary Retry/export flow.
 
+Equipment folders drill through kind and the original category facets;
+breadcrumbs preserve the staged tray and search spans the catalog. Newly added
+armor starts equipped, weapons ready and other items in the pack. Filling an
+armor or shield slot moves the previous occupant to the pack; attunement stays
+independent of item location. Saved snapshots keep slot classification useful
+without a provider. Equipment writes refresh computed fallback values when
+rules data is available, and retain them when it is not.
+
+`spell-options` supplies eligible class/grant spells, casting abilities, free
+uses, ritual eligibility, copy costs and allowed slots. The UI does not infer
+edition rules from names. Granted-spell choices retain explicit empty lists;
+clearing a default is not the same as leaving the choice unset. Free casts use
+the existing `charge-<spell>` tracker keys and rest recovery.
+
+Copying previews the engine's GP deduction and optional scroll consumption.
+The learned spell, currency and inventory change are one revisioned write;
+canceling writes nothing, and a failed write retains the complete draft for
+Retry. Copying from another book consumes no scroll. Scroll matches use an
+authored `spellRef` or the legacy readable scroll/spell name. Known-spell swaps
+also require review and save class level, total level and both references in
+`spellSwaps`; they record player-directed level-up changes without advancing
+the character or automatically enforcing a level-up schedule.
+
 ## Legacy campaign data
 
 There is no permanent legacy-save subsystem. During supervised cutover, the

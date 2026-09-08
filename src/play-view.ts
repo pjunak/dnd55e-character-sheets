@@ -1,4 +1,6 @@
 import { abilities, abilityModifier, createId, signed, skills, type Ability, type SheetState } from "./sheet-state.js";
+import type { RuleRecord } from "./engine-client.js";
+import { equipmentSlot, type EquipmentSlot } from "./equipment-state.js";
 
 export type Layout = "compact" | "classic";
 export interface PlayView {
@@ -8,6 +10,9 @@ export interface PlayView {
   readonly layout: Layout;
   readonly save: (change: (draft: SheetState) => void) => void;
   readonly addItem?: () => void;
+  readonly equipment?: readonly RuleRecord[];
+  readonly fillSlot?: (slot: EquipmentSlot) => void;
+  readonly clearSlot?: (itemId: string) => void;
 }
 const abilityNames: Record<Ability, string> = { STR: "Strength", DEX: "Dexterity", CON: "Constitution", INT: "Intelligence", WIS: "Wisdom", CHA: "Charisma" };
 const aliases: Record<string, string> = { "animal handling": "animalHandling", "sleight of hand": "sleightOfHand" };
@@ -99,9 +104,19 @@ export function vitals(view: PlayView): HTMLElement {
   }
   band.append(stats);
   const worn = state.inventory.filter(item => item.location === "equipped" || item["attuned"] === true);
-  if (worn.length > 0) {
+  if (worn.length > 0 || editable) {
     const slots = el(document, "div", "dse-worn"); slots.append(el(document, "span", "dse-stat-label", "Worn · Attunement"));
-    for (const item of worn) slots.append(el(document, "span", "dse-equipment-slot", `${item["attuned"] ? "★ " : ""}${item.name}`));
+    for (const [slot, title] of [["armor", "Armor"], ["shield", "Shield"], ["worn", "Worn"], ["attuned", "Attunement"]] as const) {
+      const group = el(document, "div", "dse-worn-group"); group.append(el(document, "span", "dse-stat-label", title));
+      const items = worn.filter(item => equipmentSlot(item, view.equipment ?? []) === slot);
+      for (const item of items) {
+        const token = el(document, "span", "dse-equipment-slot", `${slot === "attuned" ? "★ " : ""}${item.name}`);
+        if (editable && view.clearSlot) token.append(button(document, "×", () => view.clearSlot!(item.id), false, `${slot === "attuned" ? "End attunement to" : "Unequip"} ${item.name}`)); group.append(token);
+      }
+      if (editable && view.fillSlot) group.append(button(document, `＋ ${title}`, () => view.fillSlot!(slot), false, `Fill ${title} slot`));
+      else if (!items.length) group.append(el(document, "span", "dse-empty", "—"));
+      slots.append(group);
+    }
     band.append(slots);
   }
   return band;

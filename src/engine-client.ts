@@ -19,8 +19,14 @@ export type PlayChange =
   | { readonly operation: "spend-hit-die"; readonly key: string }
   | { readonly operation: "toggle-feature"; readonly key: string; readonly enabled: boolean }
   | { readonly operation: "select-spell"; readonly classId: string; readonly ref: string; readonly selection: "cantrips" | "spellbook" | "preparedSpells"; readonly selected: boolean }
-  | { readonly operation: "cast-spell"; readonly classId: string; readonly ref: string; readonly slot: string };
-export interface PlayResult extends Hydration { readonly available: boolean; readonly status: string; readonly decisions: Record<string, unknown>; readonly errors: readonly string[] }
+  | { readonly operation: "cast-spell"; readonly classId: string; readonly ref: string; readonly slot: string }
+  | { readonly operation: "select-grant-spell"; readonly key: string; readonly ref: string; readonly selected: boolean }
+  | { readonly operation: "select-casting-ability"; readonly key: string; readonly ability: string }
+  | { readonly operation: "cast-granted-spell"; readonly key: string; readonly slot: string }
+  | { readonly operation: "cast-ritual"; readonly classId: string; readonly ref: string }
+  | { readonly operation: "copy-spell"; readonly classId: string; readonly ref: string; readonly scrollId: string }
+  | { readonly operation: "swap-spell"; readonly classId: string; readonly out: string; readonly ref: string };
+export interface PlayResult extends Hydration { readonly available: boolean; readonly status: string; readonly decisions: Record<string, unknown>; readonly errors: readonly string[]; readonly options?: Record<string, unknown> }
 
 export class RulesEngineClient {
   readonly #handle: ServiceHandle;
@@ -45,6 +51,10 @@ export class RulesEngineClient {
 
   playChange(decisions: SheetState, change: PlayChange): Promise<PlayResult> {
     return this.#handle.call("apply-play-change", { contractVersion: "rules-engine-play-change.v1", decisions, change }, { deadlineMs: 15_000, signal: this.#signal });
+  }
+
+  spellOptions(decisions: SheetState): Promise<PlayResult> {
+    return this.#handle.call("spell-options", { contractVersion: "rules-engine-spell-options.v1", decisions }, { deadlineMs: 15_000, signal: this.#signal });
   }
 
   builderPlan(decisions: SheetState): Promise<BuilderPlanResult> {

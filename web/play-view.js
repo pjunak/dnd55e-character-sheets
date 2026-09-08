@@ -1,4 +1,5 @@
 import { abilities, abilityModifier, createId, signed, skills } from "./sheet-state.js";
+import { equipmentSlot } from "./equipment-state.js";
 const abilityNames = { STR: "Strength", DEX: "Dexterity", CON: "Constitution", INT: "Intelligence", WIS: "Wisdom", CHA: "Charisma" };
 const aliases = { "animal handling": "animalHandling", "sleight of hand": "sleightOfHand" };
 export function savedComputed(state) { return record(state.rulesProvider?.["materialized"]); }
@@ -114,11 +115,25 @@ export function vitals(view) {
     }
     band.append(stats);
     const worn = state.inventory.filter(item => item.location === "equipped" || item["attuned"] === true);
-    if (worn.length > 0) {
+    if (worn.length > 0 || editable) {
         const slots = el(document, "div", "dse-worn");
         slots.append(el(document, "span", "dse-stat-label", "Worn · Attunement"));
-        for (const item of worn)
-            slots.append(el(document, "span", "dse-equipment-slot", `${item["attuned"] ? "★ " : ""}${item.name}`));
+        for (const [slot, title] of [["armor", "Armor"], ["shield", "Shield"], ["worn", "Worn"], ["attuned", "Attunement"]]) {
+            const group = el(document, "div", "dse-worn-group");
+            group.append(el(document, "span", "dse-stat-label", title));
+            const items = worn.filter(item => equipmentSlot(item, view.equipment ?? []) === slot);
+            for (const item of items) {
+                const token = el(document, "span", "dse-equipment-slot", `${slot === "attuned" ? "★ " : ""}${item.name}`);
+                if (editable && view.clearSlot)
+                    token.append(button(document, "×", () => view.clearSlot(item.id), false, `${slot === "attuned" ? "End attunement to" : "Unequip"} ${item.name}`));
+                group.append(token);
+            }
+            if (editable && view.fillSlot)
+                group.append(button(document, `＋ ${title}`, () => view.fillSlot(slot), false, `Fill ${title} slot`));
+            else if (!items.length)
+                group.append(el(document, "span", "dse-empty", "—"));
+            slots.append(group);
+        }
         band.append(slots);
     }
     return band;

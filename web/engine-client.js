@@ -20,6 +20,9 @@ export class RulesEngineClient {
     playChange(decisions, change) {
         return this.#handle.call("apply-play-change", { contractVersion: "rules-engine-play-change.v1", decisions, change }, { deadlineMs: 15_000, signal: this.#signal });
     }
+    spellOptions(decisions) {
+        return this.#handle.call("spell-options", { contractVersion: "rules-engine-spell-options.v1", decisions }, { deadlineMs: 15_000, signal: this.#signal });
+    }
     builderPlan(decisions) {
         return this.#handle.call("builder-plan", { contractVersion: "rules-engine-builder-plan.v1", decisions }, { deadlineMs: 15_000, signal: this.#signal });
     }

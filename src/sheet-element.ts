@@ -7,6 +7,8 @@ import type { SheetSnapshot } from "./sheet-repository.js";
 import { SheetEditor } from "./sheet-editor.js";
 import { abilityRail, backpack, combatDetails, el, preferredLayout, vitals, type Layout, type PlayView } from "./play-view.js";
 import { equipmentKinds, equipmentPicker, foundationEditor, playReview, restControls, spellBrowser, type SpellBrowserState } from "./workflow-view.js";
+import { copySpellForm, grantedSpells, spellSwapHistory, swapSpellForm } from "./spell-tools.js";
+import { equipmentCandidates, equipInventory, type EquipmentSlot } from "./equipment-state.js";
 
 type Tab = "sheet" | "combat" | "spells" | "builder" | "notes" | "tools";
 const tabs: readonly (readonly [Tab, string])[] = [["sheet", "Character Sheet"], ["combat", "Combat"], ["spells", "Spellbook"], ["notes", "Notes"], ["builder", "Builder"], ["tools", "Settings"]];
@@ -39,9 +41,11 @@ export function defineSheetElement(generation: string): string {
     #backgroundRecords: readonly RuleRecord[] = [];
     #subclassRecords: readonly RuleRecord[] = [];
     #spellRecords: readonly RuleRecord[] | undefined;
+    #spellOptions: Record<string, unknown> | undefined;
     #spellBrowser: SpellBrowserState = { classId: "", query: "", level: "" };
     #dialog: HTMLDialogElement | undefined;
     #dialogDirty = false;
+    #equipmentRecords: readonly RuleRecord[] = [];
 
     set codexContribution(value: ContributionContext) {
       const previous = this.#contribution;
@@ -99,6 +103,8 @@ export function defineSheetElement(generation: string): string {
       this.#hydration = undefined;
       this.#builderPlan = undefined;
       this.#spellRecords = undefined;
+      this.#spellOptions = undefined;
+      this.#equipmentRecords = [];
       this.#message = "";
       this.#busy = true;
       this.#render();
@@ -200,7 +206,9 @@ export function defineSheetElement(generation: string): string {
       return navigation;
     }
 
-    #view(state: SheetState): PlayView { return { document: this.ownerDocument, state, layout: this.#layout, editable: this.#canEdit(), save: change => { void this.#save(change); }, addItem: () => void this.#openEquipment() }; }
+    #view(state: SheetState): PlayView { return { document: this.ownerDocument, state, layout: this.#layout, editable: this.#canEdit(), save: change => { void this.#save(change); }, addItem: () => void this.#openEquipment(), equipment: this.#equipmentRecords,
+      fillSlot: slot => void this.#openSlot(slot), clearSlot: id => void this.#saveEquipment(draft => { const item = draft.inventory.find(value => value.id === id); if (item?.["attuned"]) item["attuned"] = false; else if (item) item.location = "pack"; }),
+    }; }
 
     #renderSheet(panel: HTMLElement, state: SheetState): void {
       const view = this.#view(state), columns = el(panel.ownerDocument, "div", "dse-cols"), main = el(panel.ownerDocument, "div", "dse-cols-main");
@@ -217,8 +225,15 @@ export function defineSheetElement(generation: string): string {
       panel.append(vitals(this.#view(state)));
       const section = card(document, "Spellbook");
       if (this.#runtime?.engine.available === true) {
-        if (this.#spellRecords === undefined) section.append(actionButton(document, "Manage class spells", () => void this.#loadSpells(), undefined, this.#busy));
-        else section.append(spellBrowser(this.#view(state), this.#spellRecords, this.#hydration?.sheet ?? asRecord(state.rulesProvider?.["materialized"]), this.#spellBrowser, change => void this.#play(change)));
+        if (this.#spellRecords === undefined || this.#spellOptions === undefined) section.append(actionButton(document, "Manage class spells", () => void this.#loadSpells(), undefined, this.#busy));
+        else {
+          const change = (value: PlayChange): void => { void this.#play(value); };
+          section.append(spellBrowser(this.#view(state), this.#spellRecords, this.#hydration?.sheet ?? asRecord(state.rulesProvider?.["materialized"]), this.#spellBrowser, change, {
+            options: this.#spellOptions,
+            copy: (spell, classId, cost) => this.#showDialog("Copy a spell", copySpellForm(document, state, spell, classId, cost, value => { this.#closeDialog(); void this.#play(value, true); })),
+            swap: (classId, eligible) => this.#showDialog("Level-up spell swap", swapSpellForm(document, state, classId, eligible, this.#spellRecords!, value => { this.#closeDialog(); void this.#play(value, true); })),
+          }), grantedSpells(this.#view(state), this.#spellRecords, this.#spellOptions, change), spellSwapHistory(this.#view(state), this.#spellRecords));
+        }
       }
       const saved = document.createElement("details"); saved.className = "dnd-saved-spells";
       saved.append(el(document, "summary", "", `Saved & custom spells · ${state.spells.length}`), this.#spellTable(state.spells)); section.append(saved);
@@ -438,6 +453,7 @@ export function defineSheetElement(generation: string): string {
       if (editor === undefined || !this.#canEdit()) return false;
       this.#typing = false; this.#message = "";
       const pending = editor.change(mutate);
+      this.#spellOptions = undefined;
       this.#render();
       const saved = await pending;
       if (editor !== this.#editor) return false;
@@ -538,9 +554,10 @@ export function defineSheetElement(generation: string): string {
           for (const result of results) { if (result.status === "fulfilled") catalog.push(...result.value); else unavailable = true; }
         }
         if (epoch !== this.#epoch) return;
+        this.#equipmentRecords = catalog;
         const picker = equipmentPicker(this.ownerDocument, catalog, unavailable, dirty => { this.#dialogDirty = dirty; this.#publishEdits(); }, items => {
           this.#closeDialog();
-          void this.#save(draft => { draft.inventory.push(...items); });
+          void this.#saveEquipment(draft => { draft.inventory.push(...items); });
         });
         this.#showDialog("Add equipment", picker);
       } catch (error) { if (epoch === this.#epoch) this.#fail(error, "Could not open equipment."); }
@@ -552,12 +569,48 @@ export function defineSheetElement(generation: string): string {
       if (!runtime || !snapshot || this.#busy || this.#editor?.dirty) return;
       const epoch = this.#epoch; this.#busy = true; this.#render();
       try {
-        const [catalog, hydration] = await Promise.all([runtime.engine.queryAll("spell"), runtime.engine.hydrate(snapshot.state)]);
+        const [catalog, hydration] = await Promise.all([runtime.engine.queryAll("spell"), runtime.engine.spellOptions(snapshot.state)]);
         if (epoch !== this.#epoch) return;
         if (!hydration.identity) throw new Error(hydration.warnings.join(" ") || "The spell catalog is unavailable.");
-        this.#spellRecords = catalog; this.#hydration = hydration;
+        this.#spellRecords = catalog; this.#hydration = hydration; this.#spellOptions = hydration.options;
       } catch (error) { if (epoch === this.#epoch) this.#fail(error, "Could not load spells."); }
       finally { if (epoch === this.#epoch) { this.#busy = false; this.#render(); } }
+    }
+
+    async #openSlot(slot: EquipmentSlot): Promise<void> {
+      if (!this.#canEdit() || this.#busy || this.#editor?.dirty) return;
+      const epoch = this.#epoch; this.#busy = true; this.#render();
+      try {
+        if (this.#runtime?.engine.available) {
+          const kinds = ["armor", "magic-item"];
+          const records = await Promise.allSettled(kinds.map(kind => this.#runtime!.engine.queryAll(kind)));
+          if (epoch !== this.#epoch) return;
+          records.forEach((result, index) => { if (result.status === "fulfilled") this.#equipmentRecords = [...this.#equipmentRecords.filter(item => item.kind !== kinds[index]), ...result.value]; });
+        }
+        if (epoch !== this.#epoch || !this.#snapshot) return;
+        const panel = el(this.ownerDocument, "div", "dnd-slot-picker");
+        for (const item of equipmentCandidates(this.#snapshot.state, slot, this.#equipmentRecords)) panel.append(actionButton(this.ownerDocument, item.name, () => { this.#closeDialog(); void this.#saveEquipment(draft => equipInventory(draft, item.id, slot, this.#equipmentRecords)); }));
+        if (!panel.children.length) panel.append(el(this.ownerDocument, "p", "dse-empty", "No matching items in your backpack. Add equipment first."));
+        this.#showDialog(`Choose ${slot === "attuned" ? "attunement item" : slot}`, panel);
+      } catch (error) { if (epoch === this.#epoch) this.#fail(error, "Could not open this equipment slot."); }
+      finally { if (epoch === this.#epoch) { this.#busy = false; this.#render(); } }
+    }
+
+    async #saveEquipment(change: (draft: SheetState) => void): Promise<void> {
+      const snapshot = this.#snapshot, runtime = this.#runtime;
+      if (!snapshot || !this.#canEdit() || this.#busy || this.#editor?.dirty) return;
+      const epoch = this.#epoch; this.#busy = true; this.#render();
+      let next = cloneSheet(snapshot.state); change(next);
+      try {
+        if (runtime?.engine.available) {
+          try {
+            const hydration = await runtime.engine.hydrate(next);
+            if (epoch !== this.#epoch) return;
+            if (hydration.identity && Number(asRecord(hydration.sheet["derived"])["maxHp"]) > 0) next = materializeHydration(next, hydration, runtime.engine.providerIdentity);
+          } catch { /* Authored equipment changes remain usable without rules data. */ }
+        }
+        if (epoch === this.#epoch) await this.#save(draft => replaceState(draft, next));
+      } finally { if (epoch === this.#epoch) { this.#busy = false; this.#render(); } }
     }
 
     async #play(change: PlayChange, review = false): Promise<void> {
@@ -578,12 +631,17 @@ export function defineSheetElement(generation: string): string {
         const commit = async (): Promise<void> => {
           if (epoch !== this.#epoch || this.#snapshot?.revision !== snapshot.revision || this.#editor?.dirty) return;
           this.#closeDialog();
-          if (await this.#save(draft => replaceState(draft, next))) { this.#hydration = result; this.#message = change.operation === "cast-spell" ? "Spell cast. Resources saved." : "Changes saved."; this.#messageKind = "status"; this.#render(); }
+          if (await this.#save(draft => replaceState(draft, next))) { this.#hydration = result; this.#spellOptions = result.options; this.#message = change.operation === "cast-ritual" ? "Ritual cast. No spell slot used." : change.operation.startsWith("cast-") ? "Spell cast. Resources saved." : "Changes saved."; this.#messageKind = "status"; this.#render(); }
         };
         if (review) {
           const content = playReview(this.ownerDocument, snapshot.state, next);
+          if (change.operation === "copy-spell") {
+            content.replaceChildren(el(this.ownerDocument, "p", "", `Copy ${this.#spellRecords?.find(item => item.id === change.ref)?.name ?? change.ref} into the spellbook.`), el(this.ownerDocument, "p", "", `GP: ${snapshot.state.currency["gp"] ?? 0} → ${next.currency["gp"] ?? 0}`));
+            if (change.scrollId) content.append(el(this.ownerDocument, "p", "", `Consume one ${snapshot.state.inventory.find(item => item.id === change.scrollId)?.name ?? "scroll"}.`));
+          }
+          if (change.operation === "swap-spell") content.replaceChildren(el(this.ownerDocument, "p", "", `${this.#spellRecords?.find(item => item.id === change.out)?.name ?? change.out} → ${this.#spellRecords?.find(item => item.id === change.ref)?.name ?? change.ref}`));
           content.append(actionButton(this.ownerDocument, "Apply changes", () => void commit(), "primary"));
-          this.#showDialog(change.operation === "rest" ? (change.rest === "long" ? "Review long rest" : "Review short rest") : "Review hit-die healing", content);
+          this.#showDialog(change.operation === "rest" ? (change.rest === "long" ? "Review long rest" : "Review short rest") : change.operation === "copy-spell" ? "Review spell copying" : change.operation === "swap-spell" ? "Review spell swap" : "Review hit-die healing", content);
         } else await commit();
       } catch (error) { if (epoch === this.#epoch) this.#fail(error, "Could not apply this action."); }
       finally { if (epoch === this.#epoch) { this.#busy = false; this.#render(); } }

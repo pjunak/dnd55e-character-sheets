@@ -24,6 +24,11 @@ test("engine client sends contract-owned v3 requests", async () => {
   assert.equal(calls[1].params.contractVersion, 'rules-engine-play-change.v1');
   assert.deepEqual(calls[1].params.change, { operation: 'rest', rest: 'long' });
   assert.equal(calls[1].deadlineMs, 15000);
+  await client.spellOptions(blankSheet());
+  assert.equal(calls[2].method, 'spell-options');
+  assert.equal(calls[2].params.contractVersion, 'rules-engine-spell-options.v1');
+  assert.equal(calls[2].params.change, undefined);
+  assert.equal(calls[2].deadlineMs, 15000);
 });
 
 test("materialization updates durable fallback fields while preserving play state", () => {

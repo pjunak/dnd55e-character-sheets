@@ -18,10 +18,13 @@ lore, relationships, routing, and authorization.
 - An optional guided Builder through `dnd5e.rules-engine` v3.
 - Builder species/lineage, background, base scores, subclass selection and
   split ability grants, with point-buy and choice counts.
-- A searchable equipment catalog with category filters, a quantity tray and
-  one batch save; custom items also work without a provider.
+- A searchable equipment folder tree with breadcrumbs, a quantity tray and
+  one batch save; custom items also work without a provider. Worn slots equip,
+  replace and remove armor/shields, and manage attunement from the backpack.
 - Class spellbook/cantrip/preparation controls and slot casting, plus reviewed
   short/long rests, average hit-die healing and feature activation.
+- Species/feat spell choices and casting abilities, free casts, ritual casts,
+  reviewed spell copying with GP/scroll changes, and recorded known-spell swaps.
 - Durable materialized values after every successful Builder change, so a
   sheet remains useful when the engine or rules data is unavailable.
 
@@ -52,6 +55,8 @@ those values as well.
 - `src/play-view.ts` owns ability cards, vitals, backpack and combat display.
 - `src/workflow-view.ts` owns Builder foundation fields, equipment selection,
   spell management and rest previews.
+- `src/spell-tools.ts` renders grant choices, casting, copying and swap reviews.
+- `src/equipment-state.ts` manages worn-slot placement using catalog snapshots.
 - `src/sheet-editor.ts` owns draft retention and save sequencing.
 - `src/sheet-state.ts` owns defaults, forward normalization, and manual math.
 - `src/sheet-repository.ts` owns revisioned record-extension persistence.
