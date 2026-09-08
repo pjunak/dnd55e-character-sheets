@@ -10,7 +10,7 @@ import { equipmentKinds, equipmentPicker, foundationEditor, playReview, restCont
 import { copySpellForm, grantedSpells, spellSwapHistory, swapSpellForm } from "./spell-tools.js";
 import { equipmentCandidates, equipInventory, type EquipmentSlot } from "./equipment-state.js";
 import { builderProgress, builderSummary, builderTabs, extraFeatForm, extraFeats, type BuilderTarget } from "./builder-view.js";
-import { sheetText, type SheetMessageKey } from "./sheet-catalogs.js";
+import { sheetText, sheetLabel, remainingChoices, type SheetMessageKey, type SheetParameters } from "./sheet-catalogs.js";
 import { providerStatus } from "./provider-view.js";
 
 type Tab = "sheet" | "combat" | "spells" | "builder" | "notes" | "tools";
@@ -55,7 +55,7 @@ export function defineSheetElement(generation: string): string {
     #builderRailOpen = true;
     #providerRequest: AbortController | undefined;
     #checkingRules = false;
-    #t(key: SheetMessageKey): string { return sheetText(this.#contribution?.host.locale, key); }
+    readonly #t = (key: SheetMessageKey, parameters?: SheetParameters): string => sheetText(this.#contribution?.host.locale, key, parameters);
 
     set codexContribution(value: ContributionContext) {
       const previous = this.#contribution;
@@ -103,12 +103,12 @@ export function defineSheetElement(generation: string): string {
       this.#editor?.dispose(); this.#editor = undefined; this.#typing = false;
       const contribution = this.#contribution;
       if (contribution === undefined || contribution.host.collection !== "characters") {
-        this.#renderUnavailable("The host did not provide a character record context.");
+        this.#renderUnavailable(this.#t("error.hostContext"));
         return;
       }
       const runtime = runtimeFor(contribution.addon.generation);
       if (runtime === undefined || runtime.signal.aborted) {
-        this.#renderUnavailable("This character-sheet generation is no longer active.");
+        this.#renderUnavailable(this.#t("error.generation"));
         return;
       }
       this.#runtime = runtime;
@@ -157,7 +157,7 @@ export function defineSheetElement(generation: string): string {
       const h2 = document.createElement("h2");
       h2.textContent = snapshot.state.className || this.#t("sheet.title");
       const subtitle = document.createElement("p");
-      subtitle.textContent = identityLine(snapshot.state);
+      subtitle.textContent = identityLine(snapshot.state, this.#t);
       title.append(h2, subtitle);
       const engine = actionButton(document, this.#t(`providers.${this.#runtime!.engine.diagnostics.status}`), () => {
         this.#tab = "tools"; this.#render(); this.querySelector<HTMLElement>(".dnd-provider-status")?.focus({ preventScroll: false });
@@ -231,7 +231,7 @@ export function defineSheetElement(generation: string): string {
       return navigation;
     }
 
-    #view(state: SheetState): PlayView { return { document: this.ownerDocument, state, layout: this.#layout, editable: this.#canEdit(), save: change => { void this.#save(change); }, addItem: () => void this.#openEquipment(), equipment: this.#equipmentRecords,
+    #view(state: SheetState): PlayView { return { document: this.ownerDocument, locale: this.#contribution?.host.locale, state, layout: this.#layout, editable: this.#canEdit(), save: change => { void this.#save(change); }, addItem: () => void this.#openEquipment(), equipment: this.#equipmentRecords,
       fillSlot: slot => void this.#openSlot(slot), clearSlot: id => void this.#saveEquipment(draft => { const item = draft.inventory.find(value => value.id === id); if (item?.["attuned"]) item["attuned"] = false; else if (item) item.location = "pack"; }),
     }; }
 
@@ -248,21 +248,21 @@ export function defineSheetElement(generation: string): string {
     #renderSpells(panel: HTMLElement, state: SheetState): void {
       const document = panel.ownerDocument;
       panel.append(vitals(this.#view(state)));
-      const section = card(document, "Spellbook");
+      const section = card(document, this.#t("tab.spells"));
       if (this.#runtime?.engine.available === true) {
-        if (this.#spellRecords === undefined || this.#spellOptions === undefined) section.append(actionButton(document, "Manage class spells", () => void this.#loadSpells(), undefined, this.#busy));
+        if (this.#spellRecords === undefined || this.#spellOptions === undefined) section.append(actionButton(document, this.#t("spells.manage"), () => void this.#loadSpells(), undefined, this.#busy));
         else {
           const change = (value: PlayChange): void => { void this.#play(value); };
           section.append(spellBrowser(this.#view(state), this.#spellRecords, this.#hydration?.sheet ?? asRecord(state.rulesProvider?.["materialized"]), this.#spellBrowser, change, {
             options: this.#spellOptions,
-            copy: (spell, classId, cost) => this.#showDialog("Copy a spell", copySpellForm(document, state, spell, classId, cost, value => { this.#closeDialog(); void this.#play(value, true); })),
-            swap: (classId, eligible) => this.#showDialog("Level-up spell swap", swapSpellForm(document, state, classId, eligible, this.#spellRecords!, value => { this.#closeDialog(); void this.#play(value, true); })),
+            copy: (spell, classId, cost) => this.#showDialog(this.#t("spells.copyTitle"), copySpellForm(document, state, spell, classId, cost, value => { this.#closeDialog(); void this.#play(value, true); }, this.#t)),
+            swap: (classId, eligible) => this.#showDialog(this.#t("spells.swapTitle"), swapSpellForm(document, state, classId, eligible, this.#spellRecords!, value => { this.#closeDialog(); void this.#play(value, true); }, this.#t)),
           }), grantedSpells(this.#view(state), this.#spellRecords, this.#spellOptions, change), spellSwapHistory(this.#view(state), this.#spellRecords));
         }
       }
       const saved = document.createElement("details"); saved.className = "dnd-saved-spells";
-      saved.append(el(document, "summary", "", `Saved & custom spells · ${state.spells.length}`), this.#spellTable(state.spells)); section.append(saved);
-      if (this.#canEdit()) section.append(actionButton(document, "Add spell", () => void this.#save((draft) => { draft.spells.push({ id: createId("spell"), name: "New spell", level: 0, school: "", prepared: false, origin: "manual" }); })));
+      saved.append(el(document, "summary", "", this.#t("spells.savedCount", { count: state.spells.length })), this.#spellTable(state.spells)); section.append(saved);
+      if (this.#canEdit()) section.append(actionButton(document, this.#t("spells.add"), () => void this.#save((draft) => { draft.spells.push({ id: createId("spell"), name: this.#t("spells.new"), level: 0, school: "", prepared: false, origin: "manual" }); })));
       panel.append(section);
     }
 
@@ -272,39 +272,39 @@ export function defineSheetElement(generation: string): string {
       if (this.#runtime?.engine.available !== true) {
         section.append(messageBlock(document, this.#t(this.#runtime?.engine.diagnostics.status === "missing-engine" ? "builder.standalone" : "providers.manualHelp"), "status"), this.#providerStatus()); panel.append(section); return;
       }
-      const intro = document.createElement("p"); intro.textContent = "Build your character and review its choices here. Equipment, notes and resources stay with the sheet.";
+      const intro = document.createElement("p"); intro.textContent = this.#t("builder.intro");
       section.append(intro);
       if (this.#builderPlan === undefined) {
         section.append(actionButton(document, this.#t(this.#busy ? "builder.loading" : "builder.load"), () => void this.#loadBuilder(), undefined, this.#busy), this.#providerStatus()); panel.append(section); return;
       }
       const guidance = this.#builderGuidance ?? {}, classGuidance = asRecords(guidance["classes"]);
       if (this.#builderTab !== "character" && !classGuidance.some(value => value["classId"] === this.#builderTab)) this.#builderTab = "character";
-      section.append(builderSummary(document, guidance));
+      section.append(builderSummary(document, guidance, this.#t));
       const shell = el(document, "div", "dse-builder-shell"), main = el(document, "div", "dse-builder-main");
-      if (this.#builderGuidance) shell.append(builderProgress(document, guidance, target => this.#navigateBuilder(target), this.#builderRailOpen, open => { this.#builderRailOpen = open; }));
+      if (this.#builderGuidance) shell.append(builderProgress(document, guidance, target => this.#navigateBuilder(target), this.#builderRailOpen, open => { this.#builderRailOpen = open; }, this.#t));
       else shell.classList.add("dse-builder-without-guidance");
       shell.append(main);
-      main.append(builderTabs(document, classGuidance, this.#builderTab, target => this.#navigateBuilder(target)));
+      main.append(builderTabs(document, classGuidance, this.#builderTab, target => this.#navigateBuilder(target), this.#t));
       if (this.#builderTab !== "character") {
         main.append(this.#builderClassProgress(state, classGuidance.find(value => value["classId"] === this.#builderTab)!));
         section.append(shell); panel.append(section); return;
       }
       main.append(foundationEditor(this.#view(state), this.#builderPlan, this.#speciesRecords, this.#backgroundRecords, change => void this.#changeBuild(change)));
       const classes = document.createElement("div"); classes.className = "dnd-builder-classes";
-      const heading = document.createElement("h4"); heading.textContent = "Classes"; classes.append(heading);
+      const heading = document.createElement("h4"); heading.textContent = this.#t("builder.classes"); classes.append(heading);
       const plannedClasses = this.#builderPlan.classes.length > 0 ? this.#builderPlan.classes : [{}];
       plannedClasses.forEach((selected, index) => classes.append(this.#classRow(selected, index)));
-      if (this.#canEdit()) classes.append(actionButton(document, "Add class", () => void this.#changeClasses([...plannedClasses, { classId: "", level: 1, subclass: "" }] )));
+      if (this.#canEdit()) classes.append(actionButton(document, this.#t("builder.addClass"), () => void this.#changeClasses([...plannedClasses, { classId: "", level: 1, subclass: "" }] )));
       main.append(classes);
       const choices = [...this.#builderPlan.creationChoices, ...this.#builderPlan.creationAbilityChoices, ...(this.#builderGuidance ? [] : this.#builderPlan.classChoices)];
       const choiceSection = document.createElement("div"); choiceSection.className = "dnd-builder-choices";
-      const choiceHeading = document.createElement("h4"); choiceHeading.textContent = "Choices"; choiceSection.append(choiceHeading);
-      if (choices.length === 0) choiceSection.append(messageBlock(document, "No unresolved choices are available for this build.", "status"));
+      const choiceHeading = document.createElement("h4"); choiceHeading.textContent = this.#t("builder.choices"); choiceSection.append(choiceHeading);
+      if (choices.length === 0) choiceSection.append(messageBlock(document, this.#t("builder.noUnresolved"), "status"));
       else for (const choice of choices) choiceSection.append(this.#choiceEditor(choice, state));
       main.append(choiceSection, extraFeats(this.#view(state), this.#featRecords, change => void this.#changeBuild(change), () => {
-        this.#showDialog("Add extra feat or reward", extraFeatForm(document, this.#featRecords, feat => { this.#closeDialog(); void this.#changeBuild(draft => { draft.extraFeats.push(feat); }); }, () => { this.#dialogDirty = true; this.#publishEdits(); }));
+        this.#showDialog(this.#t("builder.addReward"), extraFeatForm(document, this.#featRecords, feat => { this.#closeDialog(); void this.#changeBuild(draft => { draft.extraFeats.push(feat); }); }, () => { this.#dialogDirty = true; this.#publishEdits(); }, this.#t));
       }));
-      const refresh = actionButton(document, "Recalculate and save fallback values", () => void this.#materialize(), "primary", this.#busy || !this.#canEdit());
+      const refresh = actionButton(document, this.#t("builder.recalculate"), () => void this.#materialize(), "primary", this.#busy || !this.#canEdit());
       main.append(refresh); section.append(shell); panel.append(section);
     }
 
@@ -318,8 +318,8 @@ export function defineSheetElement(generation: string): string {
         if (epoch !== this.#epoch || !this.isConnected) return;
         const node = target.id === "tab" ? [...this.querySelectorAll<HTMLElement>("[data-builder-tab]")].find(value => value.dataset["builderTab"] === this.#builderTab)
           : [...this.querySelectorAll<HTMLElement>("[data-choice], [data-builder-level]")].find(value => value.dataset["choice"] === target.id || value.dataset["builderLevel"] === this.#builderLevel);
-        const foundationLabel: Record<string, string> = { abilities: "Base STR", species: "Species", background: "Background", lineage: "Lineage" };
-        const label = foundationLabel[target.id ?? ""] ?? (target.id?.startsWith("class-") ? `Class ${Number(target.id.slice(6)) + 1}` : "");
+        const foundationLabel: Record<string, string> = { abilities: this.#t("builder.baseAbility", { ability: "STR" }), species: this.#t("field.species"), background: this.#t("field.background"), lineage: this.#t("builder.lineage") };
+        const label = foundationLabel[target.id ?? ""] ?? (target.id?.startsWith("class-") ? this.#t("builder.classNumber", { index: Number(target.id.slice(6)) + 1 }) : "");
         const focus = node?.matches("button") ? node : node?.querySelector<HTMLElement>("select, input, summary") ?? [...this.querySelectorAll<HTMLElement>("[aria-label]")].find(value => value.getAttribute("aria-label") === label);
         focus?.focus(); (node ?? focus)?.scrollIntoView({ block: "nearest" });
       });
@@ -334,9 +334,9 @@ export function defineSheetElement(generation: string): string {
         row.addEventListener("toggle", () => { if (row.isConnected) { if (row.open) this.#builderLevel = key; else if (this.#builderLevel === key) this.#builderLevel = ""; } });
         const choices = this.#builderPlan!.classChoices.filter(choice => choice["classId"] === classId && Number(asRecord(choice["source"])["level"] ?? 1) === at);
         const needs = choices.filter(choice => asRecord(asRecord(this.#builderGuidance?.["choices"])[choice.id])["done"] !== true).length;
-        const summary = el(document, "summary", "dse-build-level-head"); summary.append(el(document, "strong", "", `Level ${at}`));
+        const summary = el(document, "summary", "dse-build-level-head"); summary.append(el(document, "strong", "", this.#t("builder.levelNumber", { level: at })));
         const featureNames = asRecords(level["features"]).map(value => String(value["label"])); if (featureNames.length) summary.append(el(document, "span", "", featureNames.join(" · ")));
-        if (needs) summary.append(el(document, "span", "dse-build-pending", `${needs} ${needs === 1 ? "choice" : "choices"} remaining`)); row.append(summary);
+        if (needs) summary.append(el(document, "span", "dse-build-pending", remainingChoices(this.#t, needs))); row.append(summary);
         for (const choice of choices) {
           const guidance = asRecord(asRecord(this.#builderGuidance?.["choices"])[choice.id]);
           const options = asRecords(guidance["options"]), count = Number(choice.count ?? 1);
@@ -346,22 +346,22 @@ export function defineSheetElement(generation: string): string {
         }
         const editors = el(document, "div", "dnd-builder-choices");
         if (at === Number(classGuidance["subclassLevel"]) && asRecords(classGuidance["subclasses"]).length) {
-          const field = fieldWrapper(document, "Subclass"), select = document.createElement("select"); select.setAttribute("aria-label", `${String(classGuidance["name"])} subclass`); select.disabled = !this.#canEdit(); select.append(option(document, "", "Choose subclass…"));
+          const field = fieldWrapper(document, this.#t("field.subclass")), select = document.createElement("select"); select.setAttribute("aria-label", this.#t("builder.namedSubclass", { name: String(classGuidance["name"]) })); select.disabled = !this.#canEdit(); select.append(option(document, "", this.#t("builder.chooseSubclass")));
           for (const value of asRecords(classGuidance["subclasses"])) select.append(option(document, String(value["id"]), String(value["label"])));
           select.value = String(this.#builderPlan!.classes[index]!["subclass"] ?? ""); select.addEventListener("change", () => void this.#changeBuild(draft => { draft.classes[index] = { ...this.#builderPlan!.classes[index], subclass: select.value }; })); field.append(select); editors.append(field);
         }
         for (const choice of choices) editors.append(this.#choiceEditor(choice, state));
         for (const feature of asRecords(level["features"])) if (feature["description"]) { const text = el(document, "details", "dnd-builder-feature"); text.append(el(document, "summary", "", String(feature["label"])), el(document, "p", "", String(feature["description"]))); editors.append(text); }
-        for (const swap of state.spellSwaps.filter(value => value["classId"] === classId && Number(value["classLevel"] ?? value["level"]) === at)) editors.append(el(document, "p", "dse-empty", `Spell change: ${String(swap["out"])} → ${String(swap["in"])}`));
+        for (const swap of state.spellSwaps.filter(value => value["classId"] === classId && Number(value["classLevel"] ?? value["level"]) === at)) editors.append(el(document, "p", "dse-empty", this.#t("spells.change", { before: String(swap["out"]), after: String(swap["in"]) })));
         row.append(editors); root.append(row);
       }
       return root;
     }
 
     #renderNotes(panel: HTMLElement, state: SheetState): void {
-      const section = card(panel.ownerDocument, "Notes");
+      const section = card(panel.ownerDocument, this.#t("tab.notes"));
       const textarea = panel.ownerDocument.createElement("textarea"); textarea.rows = 14; textarea.value = state.notes; textarea.disabled = !this.#canEdit();
-      textarea.setAttribute("aria-label", "Sheet notes");
+      textarea.setAttribute("aria-label", this.#t("notes.label"));
       textarea.addEventListener("change", () => void this.#save((draft) => { draft.notes = textarea.value; }));
       section.append(textarea); panel.append(section);
     }
@@ -389,7 +389,7 @@ export function defineSheetElement(generation: string): string {
         this.#numberField(this.#t("field.initiative"), state.initiative, (draft, value) => { draft.initiative = value; }),
       ); identity.append(fields);
       const resources = card(document, this.#t("tools.resources")); resources.append(this.#resourceTable(state.resources));
-      if (this.#canEdit()) resources.append(actionButton(document, this.#t("tools.addResource"), () => void this.#save(draft => { draft.resources.push({ id: createId("resource"), name: "New resource", current: 1, max: 1 }); })));
+      if (this.#canEdit()) resources.append(actionButton(document, this.#t("tools.addResource"), () => void this.#save(draft => { draft.resources.push({ id: createId("resource"), name: this.#t("play.newResource"), current: 1, max: 1 }); })));
       panel.append(presentation, identity, resources, this.#providerStatus());
       const engine = card(document, this.#t("tools.rules"));
       const mode = document.createElement("p"); mode.textContent = this.#t(state.rulesMode === "manual" ? "tools.manual" : "tools.auto");
@@ -437,21 +437,21 @@ export function defineSheetElement(generation: string): string {
       const document = this.ownerDocument;
       const row = document.createElement("div"); row.className = "dnd-builder-class-row";
       const select = document.createElement("select"); select.disabled = !this.#canEdit();
-      select.setAttribute("aria-label", `Class ${index + 1}`);
-      select.append(option(document, "", "Choose class…"));
+      select.setAttribute("aria-label", this.#t("builder.classNumber", { index: index + 1 }));
+      select.append(option(document, "", this.#t("builder.chooseClass")));
       for (const record of this.#classRecords) select.append(option(document, record.id, record.name ?? record.id));
       select.value = typeof selected["classId"] === "string" ? selected["classId"] : "";
       const level = numberInput(document, typeof selected["level"] === "number" ? selected["level"] : 1, !this.#canEdit(), 1, 20);
-      level.setAttribute("aria-label", `Class ${index + 1} level`);
-      const subclass = document.createElement("select"); subclass.disabled = !this.#canEdit(); subclass.setAttribute("aria-label", `Class ${index + 1} subclass`); subclass.append(option(document, "", "Choose subclass…"));
+      level.setAttribute("aria-label", this.#t("builder.classLevel", { index: index + 1 }));
+      const subclass = document.createElement("select"); subclass.disabled = !this.#canEdit(); subclass.setAttribute("aria-label", this.#t("builder.classSubclass", { index: index + 1 })); subclass.append(option(document, "", this.#t("builder.chooseSubclass")));
       const available = this.#subclassRecords.filter(item => item["classId"] === selected["classId"]);
       for (const item of available) subclass.append(option(document, item.id, item.name ?? item.id));
       const savedSubclass = typeof selected["subclass"] === "string" ? selected["subclass"] : "";
-      if (savedSubclass && !available.some(item => item.id === savedSubclass)) subclass.append(option(document, savedSubclass, `${savedSubclass} (saved)`)); subclass.value = savedSubclass;
+      if (savedSubclass && !available.some(item => item.id === savedSubclass)) subclass.append(option(document, savedSubclass, this.#t("common.savedValue", { value: savedSubclass }))); subclass.value = savedSubclass;
       const update = (): void => { if (!level.reportValidity()) return; const classes = this.#builderPlan?.classes.map((item) => ({ ...item })) ?? []; classes[index] = { ...classes[index], classId: select.value, level: Math.trunc(numberValue(level, 1)), subclass: select.value === selected["classId"] ? subclass.value : "" }; void this.#changeClasses(classes); };
       select.addEventListener("change", update); level.addEventListener("change", update);
       subclass.addEventListener("change", update); row.append(select, level, subclass);
-      if (this.#canEdit()) row.append(actionButton(document, "Remove", () => { const classes = (this.#builderPlan?.classes ?? []).filter((_, candidate) => candidate !== index); void this.#changeClasses(classes.length > 0 ? classes : [{ classId: "", level: 1, subclass: "" }]); }, "danger"));
+      if (this.#canEdit()) row.append(actionButton(document, this.#t("common.remove"), () => { const classes = (this.#builderPlan?.classes ?? []).filter((_, candidate) => candidate !== index); void this.#changeClasses(classes.length > 0 ? classes : [{ classId: "", level: 1, subclass: "" }]); }, "danger"));
       return row;
     }
 
@@ -460,7 +460,7 @@ export function defineSheetElement(generation: string): string {
       const item = document.createElement("fieldset");
       item.dataset["choice"] = choice.id;
       const guidance = asRecord(asRecord(this.#builderGuidance?.["choices"])[choice.id]);
-      const legend = document.createElement("legend"); legend.textContent = choice.prompt ?? (choice.kind === "abilityBudget" ? "Origin ability scores" : choice.kind === "asiMode" ? `${titleCase(String(choice["classId"] ?? "Class"))} level ${String(choice["level"])} advancement` : titleCase(choice.id.replaceAll(/[-_:]/g, " "))); item.append(legend);
+      const legend = document.createElement("legend"); legend.textContent = choice.prompt ?? (choice.kind === "abilityBudget" ? this.#t("builder.originScores") : choice.kind === "asiMode" ? this.#t("builder.advancement", { name: titleCase(String(choice["classId"] ?? this.#t("field.class"))), level: String(choice["level"]) }) : titleCase(choice.id.replaceAll(/[-_:]/g, " "))); item.append(legend);
       if (choice.kind === "abilityBudget") {
         item.append(this.#abilityChoiceEditor(choice));
         return item;
@@ -469,8 +469,8 @@ export function defineSheetElement(generation: string): string {
         const selectedMode = typeof state.featureChoices[choice.id] === "string" ? state.featureChoices[choice.id] as string : "";
         const mode = document.createElement("select");
         mode.disabled = !this.#canEdit();
-        mode.setAttribute("aria-label", `${legend.textContent} mode`);
-        mode.append(option(document, "", "Choose…"), option(document, "asi", "Ability score increase"), option(document, "feat", "Feat"));
+        mode.setAttribute("aria-label", this.#t("builder.choiceMode", { name: legend.textContent ?? "" }));
+        mode.append(option(document, "", this.#t("common.choose")), option(document, "asi", this.#t("builder.asi")), option(document, "feat", this.#t("builder.feat")));
         mode.value = selectedMode;
         mode.addEventListener("change", () => void this.#applyBuilderChoice(choice.id, mode.value));
         item.append(mode);
@@ -478,8 +478,8 @@ export function defineSheetElement(generation: string): string {
         if (selectedMode === "asi" && typeof ability["id"] === "string") item.append(this.#abilityChoiceEditor(ability));
         const feat = asRecord(choice["feat"]);
         if (selectedMode === "feat" && typeof feat["id"] === "string") {
-          const featSelect = document.createElement("select"); featSelect.disabled = !this.#canEdit(); featSelect.append(option(document, "", "Choose feat…"));
-          featSelect.setAttribute("aria-label", `${legend.textContent} feat`);
+          const featSelect = document.createElement("select"); featSelect.disabled = !this.#canEdit(); featSelect.append(option(document, "", this.#t("builder.chooseFeat")));
+          featSelect.setAttribute("aria-label", this.#t("builder.choiceFeat", { name: legend.textContent ?? "" }));
           const featOptions = Array.isArray(guidance["featOptions"]) ? asRecords(guidance["featOptions"]) : this.#featRecords.filter(record => !Array.isArray(feat["categories"]) || feat["categories"].includes(record["category"])).map(record => ({ id: record.id, label: record.name ?? record.id }));
           for (const value of featOptions) featSelect.append(option(document, String(value["id"]), String(value["label"])));
           const selectedFeat = state.featureChoices[feat["id"]]; if (typeof selectedFeat === "string") featSelect.value = selectedFeat;
@@ -492,25 +492,25 @@ export function defineSheetElement(generation: string): string {
       }
       const count = Math.max(1, Number(choice.count ?? 1));
       const selectedValues = Array.from({ length: count }, (_, slot) => state.featureChoices[count > 1 ? `${choice.id}#${slot}` : choice.id] ?? (slot === 0 ? choice["default"] : undefined)).filter(value => typeof value === "string" && value.length > 0);
-      item.append(el(document, "p", "dnd-builder-progress", `${new Set(selectedValues).size} / ${count} selected`));
+      item.append(el(document, "p", "dnd-builder-progress", this.#t("builder.selectedCount", { selected: new Set(selectedValues).size, count })));
       for (let slot = 0; slot < count; slot += 1) {
         const select = document.createElement("select"); select.disabled = !this.#canEdit();
         select.setAttribute("aria-label", `${legend.textContent} ${slot + 1}`);
-        select.append(option(document, "", "Choose…"));
+        select.append(option(document, "", this.#t("common.choose")));
         const key = count > 1 ? `${choice.id}#${slot}` : choice.id;
         const current = state.featureChoices[key] ?? (slot === 0 ? choice["default"] : undefined);
         const used = new Set(Array.from({ length: count }, (_, other) => other !== slot ? state.featureChoices[count > 1 ? `${choice.id}#${other}` : choice.id] ?? (other === 0 ? choice["default"] : undefined) : undefined));
         const options = this.#choiceOptions(choice);
         for (const value of options) { const node = option(document, value.id, value.label); node.disabled = used.has(value.id) && value.id !== current; select.append(node); }
         if (typeof current === "string") {
-          if (![...select.options].some(option => option.value === current)) select.append(option(document, current, `${titleCase(current)} (saved)`)); select.value = current;
+          if (![...select.options].some(option => option.value === current)) select.append(option(document, current, this.#t("common.savedValue", { value: titleCase(current) }))); select.value = current;
         }
         const choiceSlot = slot;
         select.addEventListener("change", () => void this.#applyBuilderChoice(choice.id, select.value, choiceSlot));
         item.append(select);
       }
-      if (this.#choiceOptions(choice).length === 0) item.append(el(document, "p", "dse-empty", "No choices are available from the current rules data."));
-      if (choice["changeOn"]) item.append(el(document, "p", "dse-empty", `May change on ${titleCase(String(choice["changeOn"]))}.`));
+      if (this.#choiceOptions(choice).length === 0) item.append(el(document, "p", "dse-empty", this.#t("builder.noChoices")));
+      if (choice["changeOn"]) item.append(el(document, "p", "dse-empty", this.#t("builder.changeOn", { when: titleCase(String(choice["changeOn"])) })));
       return item;
     }
 
@@ -527,7 +527,7 @@ export function defineSheetElement(generation: string): string {
       const document = this.ownerDocument; const wrapper = document.createElement("div"); wrapper.className = "dnd-builder-ability";
       const eligible = Array.isArray(descriptor["eligible"]) ? descriptor["eligible"].filter((value): value is string => typeof value === "string") : [...abilities];
       const assigned = asRecord(this.#snapshot?.state.abilityGrants.find(item => item["id"] === descriptor["id"])?.["assign"]);
-      wrapper.append(el(document, "p", "dnd-builder-progress", `${Object.values(assigned).reduce<number>((sum, value) => sum + Number(value || 0), 0)} / ${String(descriptor["budget"] ?? 0)} ability points assigned`));
+      wrapper.append(el(document, "p", "dnd-builder-progress", this.#t("builder.assigned", { assigned: Object.values(assigned).reduce<number>((sum, value) => sum + Number(value || 0), 0), budget: String(descriptor["budget"] ?? 0) })));
       for (const ability of eligible) {
         const field = fieldWrapper(document, ability);
         const amount = numberInput(document, Number(assigned[ability] ?? 0), !this.#canEdit(), 0, Number(descriptor["perAbilityMax"] ?? descriptor["budget"] ?? 2));
@@ -549,17 +549,17 @@ export function defineSheetElement(generation: string): string {
           const input = document.createElement("input");
           if (field === "prepared") { input.type = "checkbox"; input.checked = current === true; }
           else { input.type = typeof current === "number" ? "number" : "text"; input.value = String(current ?? ""); }
-          input.disabled = !this.#canEdit(); input.setAttribute("aria-label", titleCase(field));
+          input.disabled = !this.#canEdit(); input.setAttribute("aria-label", sheetLabel(this.#contribution?.host.locale, field));
           input.addEventListener("change", () => void this.#save((draft) => {
             const target = list(draft).find((candidate) => candidate.id === item.id) as Record<string, unknown> | undefined;
             if (target !== undefined) target[field] = input.type === "checkbox" ? input.checked : input.type === "number" ? numberValue(input, 0) : input.value;
           }));
           row.append(input);
         }
-        if (this.#canEdit()) row.append(actionButton(document, "Remove", () => void this.#save((draft) => { const target = list(draft); const index = target.findIndex((candidate) => candidate.id === item.id); if (index >= 0) target.splice(index, 1); }), "danger"));
+        if (this.#canEdit()) row.append(actionButton(document, this.#t("common.remove"), () => void this.#save((draft) => { const target = list(draft); const index = target.findIndex((candidate) => candidate.id === item.id); if (index >= 0) target.splice(index, 1); }), "danger"));
         table.append(row);
       }
-      if (items.length === 0) table.append(messageBlock(document, "Nothing here yet.", "status"));
+      if (items.length === 0) table.append(messageBlock(document, this.#t("common.nothing"), "status"));
       return table;
     }
 
@@ -585,15 +585,15 @@ export function defineSheetElement(generation: string): string {
 
     async #loadBuilder(): Promise<void> {
       const runtime = this.#runtime; const snapshot = this.#snapshot; if (runtime === undefined || snapshot === undefined || this.#busy || this.#editor?.dirty) return;
-      const epoch = this.#epoch; this.#busy = true; this.#message = "Loading builder…"; this.#render();
+      const epoch = this.#epoch; this.#busy = true; this.#message = this.#t("builder.loadingStatus"); this.#render();
       try {
         const [result, classes, feats, species, backgrounds, subclasses] = await Promise.all([runtime.engine.builderPlan(snapshot.state), runtime.engine.queryAll("class"), runtime.engine.queryAll("feat"), runtime.engine.queryAll("species"), runtime.engine.queryAll("background"), runtime.engine.queryAll("subclass")]);
         if (epoch !== this.#epoch) return;
-        if (!result.available || result.plan === undefined) throw new Error(result.errors.join(" ") || "The rules data needed by the builder is unavailable.");
+        if (!result.available || result.plan === undefined) throw new Error(result.errors.join(" ") || this.#t("builder.dataUnavailable"));
         this.#builderPlan = result.plan; this.#classRecords = classes; this.#featRecords = feats; this.#message = "";
         this.#builderGuidance = result.guidance;
         this.#speciesRecords = species; this.#backgroundRecords = backgrounds; this.#subclassRecords = subclasses;
-      } catch (error) { if (epoch === this.#epoch) this.#fail(error, "Could not load the builder."); }
+      } catch (error) { if (epoch === this.#epoch) this.#fail(error, this.#t("error.builderLoad")); }
       finally { if (epoch === this.#epoch) { this.#busy = false; this.#render(); } }
     }
 
@@ -608,7 +608,7 @@ export function defineSheetElement(generation: string): string {
         const changed = cloneSheet(snapshot.state); change(changed);
         const reconciled = await runtime.engine.reconcile(changed);
         if (epoch !== this.#epoch) return;
-        if (!reconciled.available) throw new Error(reconciled.errors.join(" ") || "The engine could not reconcile this build.");
+        if (!reconciled.available) throw new Error(reconciled.errors.join(" ") || this.#t("error.buildRejected"));
         const decisions = applyDecisions(changed, reconciled.decisions);
         const hydration = await runtime.engine.hydrate(decisions);
         if (epoch !== this.#epoch) return;
@@ -617,8 +617,8 @@ export function defineSheetElement(generation: string): string {
         this.#builderPlan = undefined;
         const plan = await runtime.engine.builderPlan(materialized).catch(() => undefined);
         if (epoch !== this.#epoch) return; this.#builderPlan = plan?.plan; this.#builderGuidance = plan?.guidance;
-        this.#hydration = hydration; this.#message = "Build updated and fallback values saved."; this.#messageKind = "status";
-      } catch (error) { if (epoch === this.#epoch) this.#fail(error, "Could not update the build."); }
+        this.#hydration = hydration; this.#message = this.#t("builder.updated"); this.#messageKind = "status";
+      } catch (error) { if (epoch === this.#epoch) this.#fail(error, this.#t("error.buildUpdate")); }
       finally { if (epoch === this.#epoch) { this.#busy = false; this.#render(); } }
     }
 
@@ -629,7 +629,7 @@ export function defineSheetElement(generation: string): string {
         const change = slot === undefined ? { choiceId, value } : { choiceId, slot, value };
         const applied = await runtime.engine.applyChoice(snapshot.state, change);
         if (epoch !== this.#epoch) return;
-        if (!applied.available) throw new Error(applied.errors.join(" ") || "The engine rejected this choice.");
+        if (!applied.available) throw new Error(applied.errors.join(" ") || this.#t("error.choiceRejected"));
         const decisions = applyDecisions(snapshot.state, applied.decisions);
         const hydration = await runtime.engine.hydrate(decisions);
         if (epoch !== this.#epoch) return;
@@ -638,16 +638,16 @@ export function defineSheetElement(generation: string): string {
         this.#builderPlan = undefined;
         const plan = await runtime.engine.builderPlan(materialized).catch(() => undefined);
         if (epoch !== this.#epoch) return; this.#builderPlan = plan?.plan; this.#builderGuidance = plan?.guidance;
-        this.#hydration = hydration; this.#message = "Choice saved and fallback values refreshed."; this.#messageKind = "status";
-      } catch (error) { if (epoch === this.#epoch) this.#fail(error, "Could not apply this builder choice."); }
+        this.#hydration = hydration; this.#message = this.#t("builder.choiceSaved"); this.#messageKind = "status";
+      } catch (error) { if (epoch === this.#epoch) this.#fail(error, this.#t("error.choiceApply")); }
       finally { if (epoch === this.#epoch) { this.#busy = false; this.#render(); } }
     }
 
     async #previewHydration(): Promise<void> {
       const runtime = this.#runtime; const snapshot = this.#snapshot; if (runtime === undefined || snapshot === undefined || this.#busy || this.#editor?.dirty) return;
       const epoch = this.#epoch; this.#busy = true; this.#render();
-      try { const hydration = await runtime.engine.hydrate(snapshot.state); if (epoch !== this.#epoch) return; this.#hydration = hydration; this.#message = this.#hydration.warnings.length > 0 ? this.#hydration.warnings.join(" ") : "Computed preview refreshed."; this.#messageKind = "status"; }
-      catch (error) { if (epoch === this.#epoch) this.#fail(error, "Could not compute this sheet."); }
+      try { const hydration = await runtime.engine.hydrate(snapshot.state); if (epoch !== this.#epoch) return; this.#hydration = hydration; this.#message = this.#hydration.warnings.length > 0 ? this.#hydration.warnings.join(" ") : this.#t("rules.previewed"); this.#messageKind = "status"; }
+      catch (error) { if (epoch === this.#epoch) this.#fail(error, this.#t("error.compute")); }
       finally { if (epoch === this.#epoch) { this.#busy = false; this.#render(); } }
     }
 
@@ -661,7 +661,7 @@ export function defineSheetElement(generation: string): string {
       this.#closeDialog();
       const document = this.ownerDocument, dialog = document.createElement("dialog");
       dialog.className = "addon-dnd-sheets dnd-workflow-dialog"; dialog.setAttribute("aria-label", title);
-      const heading = el(document, "div", "dnd-workflow-controls"); heading.append(el(document, "h3", "", title), actionButton(document, "Cancel", () => this.#closeDialog()));
+      const heading = el(document, "div", "dnd-workflow-controls"); heading.append(el(document, "h3", "", title), actionButton(document, this.#t("common.cancel"), () => this.#closeDialog()));
       dialog.append(heading, content); dialog.addEventListener("cancel", event => { event.preventDefault(); this.#closeDialog(); });
       this.#dialog = dialog; document.body.append(dialog); dialog.showModal();
     }
@@ -681,9 +681,9 @@ export function defineSheetElement(generation: string): string {
         const picker = equipmentPicker(this.ownerDocument, catalog, unavailable, dirty => { this.#dialogDirty = dirty; this.#publishEdits(); }, items => {
           this.#closeDialog();
           void this.#saveEquipment(draft => { draft.inventory.push(...items); });
-        });
-        this.#showDialog("Add equipment", picker);
-      } catch (error) { if (epoch === this.#epoch) this.#fail(error, "Could not open equipment."); }
+        }, this.#t);
+        this.#showDialog(this.#t("equipment.addTitle"), picker);
+      } catch (error) { if (epoch === this.#epoch) this.#fail(error, this.#t("error.equipmentOpen")); }
       finally { if (epoch === this.#epoch) { this.#busy = false; this.#render(); } }
     }
 
@@ -694,9 +694,9 @@ export function defineSheetElement(generation: string): string {
       try {
         const [catalog, hydration] = await Promise.all([runtime.engine.queryAll("spell"), runtime.engine.spellOptions(snapshot.state)]);
         if (epoch !== this.#epoch) return;
-        if (!hydration.identity) throw new Error(hydration.warnings.join(" ") || "The spell catalog is unavailable.");
+        if (!hydration.identity) throw new Error(hydration.warnings.join(" ") || this.#t("spells.unavailable"));
         this.#spellRecords = catalog; this.#hydration = hydration; this.#spellOptions = hydration.options;
-      } catch (error) { if (epoch === this.#epoch) this.#fail(error, "Could not load spells."); }
+      } catch (error) { if (epoch === this.#epoch) this.#fail(error, this.#t("error.spellsLoad")); }
       finally { if (epoch === this.#epoch) { this.#busy = false; this.#render(); } }
     }
 
@@ -713,9 +713,9 @@ export function defineSheetElement(generation: string): string {
         if (epoch !== this.#epoch || !this.#snapshot) return;
         const panel = el(this.ownerDocument, "div", "dnd-slot-picker");
         for (const item of equipmentCandidates(this.#snapshot.state, slot, this.#equipmentRecords)) panel.append(actionButton(this.ownerDocument, item.name, () => { this.#closeDialog(); void this.#saveEquipment(draft => equipInventory(draft, item.id, slot, this.#equipmentRecords)); }));
-        if (!panel.children.length) panel.append(el(this.ownerDocument, "p", "dse-empty", "No matching items in your backpack. Add equipment first."));
-        this.#showDialog(`Choose ${slot === "attuned" ? "attunement item" : slot}`, panel);
-      } catch (error) { if (epoch === this.#epoch) this.#fail(error, "Could not open this equipment slot."); }
+        if (!panel.children.length) panel.append(el(this.ownerDocument, "p", "dse-empty", this.#t("equipment.noSlotItems")));
+        this.#showDialog(this.#t(({ armor: "equipment.chooseArmor", shield: "equipment.chooseShield", worn: "equipment.chooseWorn", attuned: "equipment.chooseAttuned" } as const)[slot]), panel);
+      } catch (error) { if (epoch === this.#epoch) this.#fail(error, this.#t("error.slotOpen")); }
       finally { if (epoch === this.#epoch) { this.#busy = false; this.#render(); } }
     }
 
@@ -743,7 +743,7 @@ export function defineSheetElement(generation: string): string {
       try {
         const result = await runtime.engine.playChange(snapshot.state, change);
         if (epoch !== this.#epoch) return;
-        if (!result.available || !result.identity) throw new Error(result.errors.join(" ") || "The rules data for this action is unavailable.");
+        if (!result.available || !result.identity) throw new Error(result.errors.join(" ") || this.#t("rules.actionUnavailable"));
         const next = materializeHydration(applyDecisions(snapshot.state, result.decisions), result, runtime.engine.providerIdentity);
         // Keep human-readable spell snapshots when the catalog is later removed.
         for (const spell of next.spells) {
@@ -754,19 +754,19 @@ export function defineSheetElement(generation: string): string {
         const commit = async (): Promise<void> => {
           if (epoch !== this.#epoch || this.#snapshot?.revision !== snapshot.revision || this.#editor?.dirty) return;
           this.#closeDialog();
-          if (await this.#save(draft => replaceState(draft, next))) { this.#hydration = result; this.#spellOptions = result.options; this.#message = change.operation === "cast-ritual" ? "Ritual cast. No spell slot used." : change.operation.startsWith("cast-") ? "Spell cast. Resources saved." : "Changes saved."; this.#messageKind = "status"; this.#render(); }
+          if (await this.#save(draft => replaceState(draft, next))) { this.#hydration = result; this.#spellOptions = result.options; this.#message = change.operation === "cast-ritual" ? this.#t("spells.ritualDone") : change.operation.startsWith("cast-") ? this.#t("spells.castDone") : this.#t("save.changes"); this.#messageKind = "status"; this.#render(); }
         };
         if (review) {
-          const content = playReview(this.ownerDocument, snapshot.state, next);
+          const content = playReview(this.ownerDocument, snapshot.state, next, this.#t);
           if (change.operation === "copy-spell") {
-            content.replaceChildren(el(this.ownerDocument, "p", "", `Copy ${this.#spellRecords?.find(item => item.id === change.ref)?.name ?? change.ref} into the spellbook.`), el(this.ownerDocument, "p", "", `GP: ${snapshot.state.currency["gp"] ?? 0} → ${next.currency["gp"] ?? 0}`));
-            if (change.scrollId) content.append(el(this.ownerDocument, "p", "", `Consume one ${snapshot.state.inventory.find(item => item.id === change.scrollId)?.name ?? "scroll"}.`));
+            content.replaceChildren(el(this.ownerDocument, "p", "", this.#t("spells.copyReview", { name: this.#spellRecords?.find(item => item.id === change.ref)?.name ?? change.ref })), el(this.ownerDocument, "p", "", this.#t("spells.goldReview", { before: snapshot.state.currency["gp"] ?? 0, after: next.currency["gp"] ?? 0 })));
+            if (change.scrollId) content.append(el(this.ownerDocument, "p", "", this.#t("spells.consumeReview", { name: snapshot.state.inventory.find(item => item.id === change.scrollId)?.name ?? this.#t("spells.scroll") })));
           }
           if (change.operation === "swap-spell") content.replaceChildren(el(this.ownerDocument, "p", "", `${this.#spellRecords?.find(item => item.id === change.out)?.name ?? change.out} → ${this.#spellRecords?.find(item => item.id === change.ref)?.name ?? change.ref}`));
-          content.append(actionButton(this.ownerDocument, "Apply changes", () => void commit(), "primary"));
-          this.#showDialog(change.operation === "rest" ? (change.rest === "long" ? "Review long rest" : "Review short rest") : change.operation === "copy-spell" ? "Review spell copying" : change.operation === "swap-spell" ? "Review spell swap" : "Review hit-die healing", content);
+          content.append(actionButton(this.ownerDocument, this.#t("common.apply"), () => void commit(), "primary"));
+          this.#showDialog(change.operation === "rest" ? (change.rest === "long" ? this.#t("rest.reviewLong") : this.#t("rest.reviewShort")) : change.operation === "copy-spell" ? this.#t("spells.reviewCopyTitle") : change.operation === "swap-spell" ? this.#t("spells.reviewSwap") : this.#t("rest.reviewHealing"), content);
         } else await commit();
-      } catch (error) { if (epoch === this.#epoch) this.#fail(error, "Could not apply this action."); }
+      } catch (error) { if (epoch === this.#epoch) this.#fail(error, this.#t("error.action")); }
       finally { if (epoch === this.#epoch) { this.#busy = false; this.#render(); } }
     }
 
@@ -776,12 +776,12 @@ export function defineSheetElement(generation: string): string {
       const epoch = this.#epoch; this.#busy = true; this.#render();
       try {
         const hydration = await runtime.engine.hydrate(snapshot.state); const materialized = this.#withClassFallback(materializeHydration(snapshot.state, hydration, runtime.engine.providerIdentity));
-        if (epoch !== this.#epoch || !await this.#save((draft) => replaceState(draft, materialized))) return; this.#hydration = hydration; this.#message = "Computed fallback values saved."; this.#messageKind = "status";
+        if (epoch !== this.#epoch || !await this.#save((draft) => replaceState(draft, materialized))) return; this.#hydration = hydration; this.#message = this.#t("rules.saved"); this.#messageKind = "status";
         if (refreshBuilder) {
           const result = await runtime.engine.builderPlan(materialized).catch(() => undefined);
           if (epoch !== this.#epoch) return; this.#builderPlan = result?.plan; this.#builderGuidance = result?.guidance;
         }
-      } catch (error) { if (epoch === this.#epoch) this.#fail(error, "Could not refresh computed values."); }
+      } catch (error) { if (epoch === this.#epoch) this.#fail(error, this.#t("error.refresh")); }
       finally { if (epoch === this.#epoch) { this.#busy = false; this.#render(); } }
     }
 
@@ -789,7 +789,7 @@ export function defineSheetElement(generation: string): string {
       if (!this.#canEdit() || this.#snapshot === undefined) return;
       const epoch = this.#epoch;
       try { const imported = parseSheet(await file.text()); if (epoch !== this.#epoch) return; await this.#save((draft) => replaceState(draft, imported)); }
-      catch (error) { if (epoch === this.#epoch) { this.#fail(error, "Could not import this sheet."); this.#render(); } }
+      catch (error) { if (epoch === this.#epoch) { this.#fail(error, this.#t("error.import")); this.#render(); } }
     }
 
     #canEdit(): boolean { return this.#contribution?.host.canEdit === true && this.#editing; }
@@ -812,7 +812,7 @@ export function defineSheetElement(generation: string): string {
 }
 
 function replaceState(target: SheetState, source: SheetState): void { for (const key of Object.keys(target)) delete target[key]; Object.assign(target, cloneSheet(source)); }
-function identityLine(state: SheetState): string { return [state.subclass, state.className, `Level ${state.level}`, state.species || state.race, state.background].filter((value) => value !== "").join(" · "); }
+function identityLine(state: SheetState, t: (key: SheetMessageKey, parameters?: SheetParameters) => string): string { return [state.subclass, state.className, t("builder.levelNumber", { level: state.level }), state.species || state.race, state.background].filter((value) => value !== "").join(" · "); }
 function card(document: Document, title: string): HTMLElement { const section = document.createElement("section"); section.className = "dnd-sheet-card"; const heading = document.createElement("h3"); heading.textContent = title; section.append(heading); return section; }
 function fieldWrapper(document: Document, label: string): HTMLLabelElement { const wrapper = document.createElement("label"); wrapper.className = "dnd-sheet-field"; const text = document.createElement("span"); text.textContent = label; wrapper.append(text); return wrapper; }
 function numberInput(document: Document, value: number, disabled: boolean, min?: number, max?: number): HTMLInputElement { const input = document.createElement("input"); input.type = "number"; input.value = String(value); input.disabled = disabled; if (min !== undefined) input.min = String(min); if (max !== undefined) input.max = String(max); return input; }

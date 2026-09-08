@@ -31,9 +31,9 @@ lore, relationships, routing, and authorization.
   sheet remains useful when the engine or rules data is unavailable.
 - Rules connection status, explicit reconnect, and a comparison of current
   providers with the source of saved computed values. Checking never writes.
-- English/Czech sheet navigation, settings, save recovery and diagnostics,
-  using the host language preference. Play and Builder content translation is
-  still in progress; authored names and notes keep their original language.
+- English/Czech navigation, play controls, Builder, equipment and spell tools,
+  reviews, settings, save recovery and diagnostics, using the host language
+  preference. Authored names, notes and provider content keep their language.
 
 The package does not implement D&D rules or carry rulebook data. Those belong
 to the selected rules engine and its selected rules-data provider. Missing or

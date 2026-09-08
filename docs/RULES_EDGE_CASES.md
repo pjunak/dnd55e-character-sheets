@@ -149,12 +149,15 @@ use the preserved v1 theme primitives. Settings retains manual identity and
 resource editing. Host `canEdit` remains authoritative, including the current
 host policy allowing authenticated players to edit.
 
-The optional public article context `locale` selects English or Czech for
-sheet navigation, Settings, save recovery and provider diagnostics; missing
-locale defaults to English. A context refresh preserves the mounted editor.
-Layout preferences keep their stable values in either language. The rest of
-the play/Builder text remains a separate catalog migration; authored and
-provider-supplied content is displayed as received.
+The optional public article context `locale` selects English or Czech for the
+sheet-owned interface: navigation, abilities, skills, combat, inventory,
+Builder, equipment/spell tools, reviews, Settings, save recovery and provider
+diagnostics. Missing locale defaults to English. A context refresh preserves
+the mounted editor. Complete message templates retain names and counts in
+either language, including Czech choice-count grammar and accessibility labels.
+Layout preferences, field names, option values and service requests keep their
+stable identifiers. Authored and provider-supplied content, including rulebook
+names, feature prompts and provider errors, is displayed as received.
 
 The v2
 `dnd-sheets.renderer` service was removed because it exchanged live browser
