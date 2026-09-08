@@ -6,9 +6,10 @@ import { abilities, cloneSheet, createId, type ResourceItem, type SheetState, ty
 import type { SheetSnapshot } from "./sheet-repository.js";
 import { SheetEditor } from "./sheet-editor.js";
 import { abilityRail, backpack, combatDetails, el, preferredLayout, vitals, type Layout, type PlayView } from "./play-view.js";
-import { equipmentKinds, equipmentPicker, foundationEditor, playReview, restControls, spellBrowser, type SpellBrowserState } from "./workflow-view.js";
+import { equipmentKinds, equipmentPicker, foundationEditor, playReview, restControls, spellBrowser, rows as asRecords, type SpellBrowserState } from "./workflow-view.js";
 import { copySpellForm, grantedSpells, spellSwapHistory, swapSpellForm } from "./spell-tools.js";
 import { equipmentCandidates, equipInventory, type EquipmentSlot } from "./equipment-state.js";
+import { builderProgress, builderSummary, builderTabs, extraFeatForm, extraFeats, type BuilderTarget } from "./builder-view.js";
 
 type Tab = "sheet" | "combat" | "spells" | "builder" | "notes" | "tools";
 const tabs: readonly (readonly [Tab, string])[] = [["sheet", "Character Sheet"], ["combat", "Combat"], ["spells", "Spellbook"], ["notes", "Notes"], ["builder", "Builder"], ["tools", "Settings"]];
@@ -46,6 +47,10 @@ export function defineSheetElement(generation: string): string {
     #dialog: HTMLDialogElement | undefined;
     #dialogDirty = false;
     #equipmentRecords: readonly RuleRecord[] = [];
+    #builderGuidance: Record<string, unknown> | undefined;
+    #builderTab = "character";
+    #builderLevel = "";
+    #builderRailOpen = true;
 
     set codexContribution(value: ContributionContext) {
       const previous = this.#contribution;
@@ -102,6 +107,9 @@ export function defineSheetElement(generation: string): string {
       try { this.#layout = preferredLayout(this.ownerDocument.defaultView?.localStorage, contribution.host.key); } catch { this.#layout = "compact"; }
       this.#hydration = undefined;
       this.#builderPlan = undefined;
+      this.#builderGuidance = undefined;
+      this.#builderTab = "character"; this.#builderLevel = "";
+      this.#builderRailOpen = !this.ownerDocument.defaultView?.matchMedia("(max-width: 768px)").matches;
       this.#spellRecords = undefined;
       this.#spellOptions = undefined;
       this.#equipmentRecords = [];
@@ -252,21 +260,85 @@ export function defineSheetElement(generation: string): string {
       if (this.#builderPlan === undefined) {
         section.append(actionButton(document, this.#busy ? "Loading…" : "Load builder", () => void this.#loadBuilder(), undefined, this.#busy)); panel.append(section); return;
       }
-      section.append(foundationEditor(this.#view(state), this.#builderPlan, this.#speciesRecords, this.#backgroundRecords, change => void this.#changeBuild(change)));
+      const guidance = this.#builderGuidance ?? {}, classGuidance = asRecords(guidance["classes"]);
+      if (this.#builderTab !== "character" && !classGuidance.some(value => value["classId"] === this.#builderTab)) this.#builderTab = "character";
+      section.append(builderSummary(document, guidance));
+      const shell = el(document, "div", "dse-builder-shell"), main = el(document, "div", "dse-builder-main");
+      if (this.#builderGuidance) shell.append(builderProgress(document, guidance, target => this.#navigateBuilder(target), this.#builderRailOpen, open => { this.#builderRailOpen = open; }));
+      else shell.classList.add("dse-builder-without-guidance");
+      shell.append(main);
+      main.append(builderTabs(document, classGuidance, this.#builderTab, target => this.#navigateBuilder(target)));
+      if (this.#builderTab !== "character") {
+        main.append(this.#builderClassProgress(state, classGuidance.find(value => value["classId"] === this.#builderTab)!));
+        section.append(shell); panel.append(section); return;
+      }
+      main.append(foundationEditor(this.#view(state), this.#builderPlan, this.#speciesRecords, this.#backgroundRecords, change => void this.#changeBuild(change)));
       const classes = document.createElement("div"); classes.className = "dnd-builder-classes";
       const heading = document.createElement("h4"); heading.textContent = "Classes"; classes.append(heading);
       const plannedClasses = this.#builderPlan.classes.length > 0 ? this.#builderPlan.classes : [{}];
       plannedClasses.forEach((selected, index) => classes.append(this.#classRow(selected, index)));
       if (this.#canEdit()) classes.append(actionButton(document, "Add class", () => void this.#changeClasses([...plannedClasses, { classId: "", level: 1, subclass: "" }] )));
-      section.append(classes);
-      const choices = [...this.#builderPlan.creationChoices, ...this.#builderPlan.creationAbilityChoices, ...this.#builderPlan.classChoices];
+      main.append(classes);
+      const choices = [...this.#builderPlan.creationChoices, ...this.#builderPlan.creationAbilityChoices, ...(this.#builderGuidance ? [] : this.#builderPlan.classChoices)];
       const choiceSection = document.createElement("div"); choiceSection.className = "dnd-builder-choices";
       const choiceHeading = document.createElement("h4"); choiceHeading.textContent = "Choices"; choiceSection.append(choiceHeading);
       if (choices.length === 0) choiceSection.append(messageBlock(document, "No unresolved choices are available for this build.", "status"));
       else for (const choice of choices) choiceSection.append(this.#choiceEditor(choice, state));
-      section.append(choiceSection);
+      main.append(choiceSection, extraFeats(this.#view(state), this.#featRecords, change => void this.#changeBuild(change), () => {
+        this.#showDialog("Add extra feat or reward", extraFeatForm(document, this.#featRecords, feat => { this.#closeDialog(); void this.#changeBuild(draft => { draft.extraFeats.push(feat); }); }, () => { this.#dialogDirty = true; this.#publishEdits(); }));
+      }));
       const refresh = actionButton(document, "Recalculate and save fallback values", () => void this.#materialize(), "primary", this.#busy || !this.#canEdit());
-      section.append(refresh); panel.append(section);
+      main.append(refresh); section.append(shell); panel.append(section);
+    }
+
+    #navigateBuilder(target: BuilderTarget): void {
+      if (target.tab === "spells") { this.#tab = "spells"; this.#render(); if (!this.#spellOptions) void this.#loadSpells(); return; }
+      this.#builderTab = target.tab || "character";
+      if (target.level) this.#builderLevel = `${this.#builderTab}:${target.level}`;
+      this.#typing = false; this.#render();
+      const epoch = this.#epoch;
+      this.ownerDocument.defaultView?.requestAnimationFrame(() => {
+        if (epoch !== this.#epoch || !this.isConnected) return;
+        const node = target.id === "tab" ? [...this.querySelectorAll<HTMLElement>("[data-builder-tab]")].find(value => value.dataset["builderTab"] === this.#builderTab)
+          : [...this.querySelectorAll<HTMLElement>("[data-choice], [data-builder-level]")].find(value => value.dataset["choice"] === target.id || value.dataset["builderLevel"] === this.#builderLevel);
+        const foundationLabel: Record<string, string> = { abilities: "Base STR", species: "Species", background: "Background", lineage: "Lineage" };
+        const label = foundationLabel[target.id ?? ""] ?? (target.id?.startsWith("class-") ? `Class ${Number(target.id.slice(6)) + 1}` : "");
+        const focus = node?.matches("button") ? node : node?.querySelector<HTMLElement>("select, input, summary") ?? [...this.querySelectorAll<HTMLElement>("[aria-label]")].find(value => value.getAttribute("aria-label") === label);
+        focus?.focus(); (node ?? focus)?.scrollIntoView({ block: "nearest" });
+      });
+    }
+
+    #builderClassProgress(state: SheetState, classGuidance: Record<string, unknown>): HTMLElement {
+      const document = this.ownerDocument, root = el(document, "section", "dnd-builder-progression"), classId = String(classGuidance["classId"]);
+      const index = this.#builderPlan!.classes.findIndex(value => value["classId"] === classId);
+      root.append(el(document, "h4", "", String(classGuidance["name"])), this.#classRow(this.#builderPlan!.classes[index]!, index));
+      for (const level of asRecords(classGuidance["levels"])) {
+        const at = Number(level["level"]), key = `${classId}:${at}`, row = el(document, "details", "dse-build-level"); row.dataset["builderLevel"] = key; row.open = this.#builderLevel === key;
+        row.addEventListener("toggle", () => { if (row.isConnected) { if (row.open) this.#builderLevel = key; else if (this.#builderLevel === key) this.#builderLevel = ""; } });
+        const choices = this.#builderPlan!.classChoices.filter(choice => choice["classId"] === classId && Number(asRecord(choice["source"])["level"] ?? 1) === at);
+        const needs = choices.filter(choice => asRecord(asRecord(this.#builderGuidance?.["choices"])[choice.id])["done"] !== true).length;
+        const summary = el(document, "summary", "dse-build-level-head"); summary.append(el(document, "strong", "", `Level ${at}`));
+        const featureNames = asRecords(level["features"]).map(value => String(value["label"])); if (featureNames.length) summary.append(el(document, "span", "", featureNames.join(" · ")));
+        if (needs) summary.append(el(document, "span", "dse-build-pending", `${needs} ${needs === 1 ? "choice" : "choices"} remaining`)); row.append(summary);
+        for (const choice of choices) {
+          const guidance = asRecord(asRecord(this.#builderGuidance?.["choices"])[choice.id]);
+          const options = asRecords(guidance["options"]), count = Number(choice.count ?? 1);
+          const labels = Array.from({ length: count }, (_, slot) => state.featureChoices[count > 1 ? `${choice.id}#${slot}` : choice.id] ?? (slot === 0 ? choice["default"] : undefined)).map(value => options.find(option => option["id"] === value)?.["label"]).filter(Boolean);
+          if (choice.kind === "asiMode" && state.featureChoices[choice.id] === "feat") { const selected = state.featureChoices[asRecord(choice["feat"])["id"] as string]; const feat = this.#featRecords.find(value => value.id === selected); if (feat) labels.push(feat.name ?? feat.id); }
+          if (labels.length) summary.append(el(document, "span", "dnd-builder-choice-summary", labels.join(" · ")));
+        }
+        const editors = el(document, "div", "dnd-builder-choices");
+        if (at === Number(classGuidance["subclassLevel"]) && asRecords(classGuidance["subclasses"]).length) {
+          const field = fieldWrapper(document, "Subclass"), select = document.createElement("select"); select.setAttribute("aria-label", `${String(classGuidance["name"])} subclass`); select.disabled = !this.#canEdit(); select.append(option(document, "", "Choose subclass…"));
+          for (const value of asRecords(classGuidance["subclasses"])) select.append(option(document, String(value["id"]), String(value["label"])));
+          select.value = String(this.#builderPlan!.classes[index]!["subclass"] ?? ""); select.addEventListener("change", () => void this.#changeBuild(draft => { draft.classes[index] = { ...this.#builderPlan!.classes[index], subclass: select.value }; })); field.append(select); editors.append(field);
+        }
+        for (const choice of choices) editors.append(this.#choiceEditor(choice, state));
+        for (const feature of asRecords(level["features"])) if (feature["description"]) { const text = el(document, "details", "dnd-builder-feature"); text.append(el(document, "summary", "", String(feature["label"])), el(document, "p", "", String(feature["description"]))); editors.append(text); }
+        for (const swap of state.spellSwaps.filter(value => value["classId"] === classId && Number(value["classLevel"] ?? value["level"]) === at)) editors.append(el(document, "p", "dse-empty", `Spell change: ${String(swap["out"])} → ${String(swap["in"])}`));
+        row.append(editors); root.append(row);
+      }
+      return root;
     }
 
     #renderNotes(panel: HTMLElement, state: SheetState): void {
@@ -348,6 +420,8 @@ export function defineSheetElement(generation: string): string {
     #choiceEditor(choice: BuilderChoice, state: SheetState): HTMLElement {
       const document = this.ownerDocument;
       const item = document.createElement("fieldset");
+      item.dataset["choice"] = choice.id;
+      const guidance = asRecord(asRecord(this.#builderGuidance?.["choices"])[choice.id]);
       const legend = document.createElement("legend"); legend.textContent = choice.prompt ?? (choice.kind === "abilityBudget" ? "Origin ability scores" : choice.kind === "asiMode" ? `${titleCase(String(choice["classId"] ?? "Class"))} level ${String(choice["level"])} advancement` : titleCase(choice.id.replaceAll(/[-_:]/g, " "))); item.append(legend);
       if (choice.kind === "abilityBudget") {
         item.append(this.#abilityChoiceEditor(choice));
@@ -357,6 +431,7 @@ export function defineSheetElement(generation: string): string {
         const selectedMode = typeof state.featureChoices[choice.id] === "string" ? state.featureChoices[choice.id] as string : "";
         const mode = document.createElement("select");
         mode.disabled = !this.#canEdit();
+        mode.setAttribute("aria-label", `${legend.textContent} mode`);
         mode.append(option(document, "", "Choose…"), option(document, "asi", "Ability score increase"), option(document, "feat", "Feat"));
         mode.value = selectedMode;
         mode.addEventListener("change", () => void this.#applyBuilderChoice(choice.id, mode.value));
@@ -366,7 +441,9 @@ export function defineSheetElement(generation: string): string {
         const feat = asRecord(choice["feat"]);
         if (selectedMode === "feat" && typeof feat["id"] === "string") {
           const featSelect = document.createElement("select"); featSelect.disabled = !this.#canEdit(); featSelect.append(option(document, "", "Choose feat…"));
-          for (const record of this.#featRecords.filter(record => !Array.isArray(feat["categories"]) || feat["categories"].includes(record["category"]))) featSelect.append(option(document, record.id, record.name ?? record.id));
+          featSelect.setAttribute("aria-label", `${legend.textContent} feat`);
+          const featOptions = Array.isArray(guidance["featOptions"]) ? asRecords(guidance["featOptions"]) : this.#featRecords.filter(record => !Array.isArray(feat["categories"]) || feat["categories"].includes(record["category"])).map(record => ({ id: record.id, label: record.name ?? record.id }));
+          for (const value of featOptions) featSelect.append(option(document, String(value["id"]), String(value["label"])));
           const selectedFeat = state.featureChoices[feat["id"]]; if (typeof selectedFeat === "string") featSelect.value = selectedFeat;
           featSelect.addEventListener("change", () => void this.#applyBuilderChoice(feat["id"] as string, featSelect.value));
           item.append(featSelect);
@@ -382,9 +459,11 @@ export function defineSheetElement(generation: string): string {
         const select = document.createElement("select"); select.disabled = !this.#canEdit();
         select.setAttribute("aria-label", `${legend.textContent} ${slot + 1}`);
         select.append(option(document, "", "Choose…"));
-        for (const value of this.#choiceOptions(choice)) select.append(option(document, value.id, value.label));
         const key = count > 1 ? `${choice.id}#${slot}` : choice.id;
         const current = state.featureChoices[key] ?? (slot === 0 ? choice["default"] : undefined);
+        const used = new Set(Array.from({ length: count }, (_, other) => other !== slot ? state.featureChoices[count > 1 ? `${choice.id}#${other}` : choice.id] ?? (other === 0 ? choice["default"] : undefined) : undefined));
+        const options = this.#choiceOptions(choice);
+        for (const value of options) { const node = option(document, value.id, value.label); node.disabled = used.has(value.id) && value.id !== current; select.append(node); }
         if (typeof current === "string") {
           if (![...select.options].some(option => option.value === current)) select.append(option(document, current, `${titleCase(current)} (saved)`)); select.value = current;
         }
@@ -392,10 +471,14 @@ export function defineSheetElement(generation: string): string {
         select.addEventListener("change", () => void this.#applyBuilderChoice(choice.id, select.value, choiceSlot));
         item.append(select);
       }
+      if (this.#choiceOptions(choice).length === 0) item.append(el(document, "p", "dse-empty", "No choices are available from the current rules data."));
+      if (choice["changeOn"]) item.append(el(document, "p", "dse-empty", `May change on ${titleCase(String(choice["changeOn"]))}.`));
       return item;
     }
 
     #choiceOptions(choice: BuilderChoice): readonly { readonly id: string; readonly label: string }[] {
+      const guidance = asRecord(asRecord(this.#builderGuidance?.["choices"])[choice.id]);
+      if (Array.isArray(guidance["options"])) return asRecords(guidance["options"]).map(value => ({ id: String(value["id"]), label: String(value["label"]) }));
       if (Array.isArray(choice.from)) return choice.from.map((id) => ({ id, label: titleCase(id) }));
       if (choice.kind === "feat") return this.#featRecords.filter(record => !choice["category"] || choice["category"] === record["category"]).map((record) => ({ id: record.id, label: record.name ?? record.id }));
       if (choice.kind === "expertise") return Object.entries(this.#snapshot?.state.skillProf ?? {}).filter(([, value]) => value).map(([id]) => ({ id, label: titleCase(id) }));
@@ -454,6 +537,7 @@ export function defineSheetElement(generation: string): string {
       this.#typing = false; this.#message = "";
       const pending = editor.change(mutate);
       this.#spellOptions = undefined;
+      this.#builderPlan = undefined; this.#builderGuidance = undefined;
       this.#render();
       const saved = await pending;
       if (editor !== this.#editor) return false;
@@ -469,6 +553,7 @@ export function defineSheetElement(generation: string): string {
         if (epoch !== this.#epoch) return;
         if (!result.available || result.plan === undefined) throw new Error(result.errors.join(" ") || "The rules data needed by the builder is unavailable.");
         this.#builderPlan = result.plan; this.#classRecords = classes; this.#featRecords = feats; this.#message = "";
+        this.#builderGuidance = result.guidance;
         this.#speciesRecords = species; this.#backgroundRecords = backgrounds; this.#subclassRecords = subclasses;
       } catch (error) { if (epoch === this.#epoch) this.#fail(error, "Could not load the builder."); }
       finally { if (epoch === this.#epoch) { this.#busy = false; this.#render(); } }
@@ -493,7 +578,7 @@ export function defineSheetElement(generation: string): string {
         if (epoch !== this.#epoch || !await this.#save((draft) => replaceState(draft, materialized))) return;
         this.#builderPlan = undefined;
         const plan = await runtime.engine.builderPlan(materialized).catch(() => undefined);
-        if (epoch !== this.#epoch) return; this.#builderPlan = plan?.plan;
+        if (epoch !== this.#epoch) return; this.#builderPlan = plan?.plan; this.#builderGuidance = plan?.guidance;
         this.#hydration = hydration; this.#message = "Build updated and fallback values saved."; this.#messageKind = "status";
       } catch (error) { if (epoch === this.#epoch) this.#fail(error, "Could not update the build."); }
       finally { if (epoch === this.#epoch) { this.#busy = false; this.#render(); } }
@@ -514,7 +599,7 @@ export function defineSheetElement(generation: string): string {
         if (epoch !== this.#epoch || !await this.#save((draft) => replaceState(draft, materialized))) return;
         this.#builderPlan = undefined;
         const plan = await runtime.engine.builderPlan(materialized).catch(() => undefined);
-        if (epoch !== this.#epoch) return; this.#builderPlan = plan?.plan;
+        if (epoch !== this.#epoch) return; this.#builderPlan = plan?.plan; this.#builderGuidance = plan?.guidance;
         this.#hydration = hydration; this.#message = "Choice saved and fallback values refreshed."; this.#messageKind = "status";
       } catch (error) { if (epoch === this.#epoch) this.#fail(error, "Could not apply this builder choice."); }
       finally { if (epoch === this.#epoch) { this.#busy = false; this.#render(); } }
@@ -649,10 +734,15 @@ export function defineSheetElement(generation: string): string {
 
     async #materialize(): Promise<void> {
       const runtime = this.#runtime; const snapshot = this.#snapshot; if (runtime === undefined || snapshot === undefined || !this.#canEdit() || this.#busy || this.#editor?.dirty) return;
+      const refreshBuilder = this.#builderPlan !== undefined;
       const epoch = this.#epoch; this.#busy = true; this.#render();
       try {
         const hydration = await runtime.engine.hydrate(snapshot.state); const materialized = this.#withClassFallback(materializeHydration(snapshot.state, hydration, runtime.engine.providerIdentity));
         if (epoch !== this.#epoch || !await this.#save((draft) => replaceState(draft, materialized))) return; this.#hydration = hydration; this.#message = "Computed fallback values saved."; this.#messageKind = "status";
+        if (refreshBuilder) {
+          const result = await runtime.engine.builderPlan(materialized).catch(() => undefined);
+          if (epoch !== this.#epoch) return; this.#builderPlan = result?.plan; this.#builderGuidance = result?.guidance;
+        }
       } catch (error) { if (epoch === this.#epoch) this.#fail(error, "Could not refresh computed values."); }
       finally { if (epoch === this.#epoch) { this.#busy = false; this.#render(); } }
     }

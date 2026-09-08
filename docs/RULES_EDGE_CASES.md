@@ -30,6 +30,23 @@ data cannot materialize a partial universal result over saved values. A failed
 post-save Builder-plan refresh leaves the successful write intact and allows
 the Builder to be loaded again.
 
+Builder guidance is read-only engine output: completion, option labels,
+subclass/level requirements and spell-grant reminders use the same provider
+snapshot. The progress rail navigates to Character controls, a class level or
+the Spellbook. Character/class tabs support arrow/Home/End navigation and use
+the original gold underline; the progress rail collapses on phone screens.
+Advanced feature, mastery, expertise, tool and feat selectors consume declared
+engine options, prevent repeated picks within one choice and retain unknown
+saved references for correction. Missing guidance retains the flat form.
+
+Extra feats and custom rewards retain stable IDs, names and source notes.
+Catalog feats affect engine calculations; custom names are tracked only.
+Add/remove/note edits use the same reconciliation/materialization write as
+other Builder changes. A staged add dialog participates in the dirty guard.
+Play operations keep calculated feats separate from manual ones, so a removed
+reward does not survive a prior rest or cast. Ordinary manual edits invalidate
+cached guidance; recalculation refreshes an already loaded Builder.
+
 Ordinary edits update a mount-owned draft immediately and serialize writes
 against acknowledged revisions. Failed writes retain that draft and pause
 automatic retries. A conflict offers draft export and explicit reload; a

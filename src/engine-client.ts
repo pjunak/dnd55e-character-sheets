@@ -12,7 +12,7 @@ export interface BuilderPlan extends Record<string, unknown> {
   readonly creationChoices: readonly BuilderChoice[];
   readonly creationAbilityChoices: readonly BuilderChoice[];
 }
-export interface BuilderPlanResult { readonly available: boolean; readonly status: string; readonly plan?: BuilderPlan; readonly identity?: EngineIdentity; readonly errors: readonly string[] }
+export interface BuilderPlanResult { readonly available: boolean; readonly status: string; readonly plan?: BuilderPlan; readonly guidance?: Record<string, unknown>; readonly identity?: EngineIdentity; readonly errors: readonly string[] }
 export interface RuleRecord extends Record<string, unknown> { readonly id: string; readonly kind: string; readonly name?: string }
 export type PlayChange =
   | { readonly operation: "rest"; readonly rest: "short" | "long" }

@@ -37,7 +37,7 @@
 .dnd-sheet-field { display:grid; gap:var(--space-1); color:var(--text-muted); font-size:var(--text-sm); }
 .dnd-sheet-field input { width:100%; }
 .dnd-sheet-card textarea { width:100%; resize:vertical; }
-.addon-dnd-sheets :is(.dnd-sheet-card,.dnd-save-status,.dse-backpack,.dse-vitals,.dse-resource) button { border:1px solid var(--border-subtle); border-radius:var(--radius-sm); background:var(--bg-raised); padding:var(--space-1) var(--space-2); }
+.addon-dnd-sheets :is(.dnd-sheet-card,.dnd-save-status,.dse-backpack,.dse-vitals,.dse-resource) button:where(:not(.codex-tab)) { border:1px solid var(--border-subtle); border-radius:var(--radius-sm); background:var(--bg-raised); padding:var(--space-1) var(--space-2); }
 .addon-dnd-sheets button.primary { color:var(--accent-gold); border-color:rgba(var(--accent-gold-rgb),.35); }
 .addon-dnd-sheets button.danger { color:var(--color-danger); }
 .dnd-sheet-table { display:grid; gap:var(--space-2); }
@@ -145,7 +145,7 @@
   .dnd-picker-split { grid-template-columns:1fr; }
   .dnd-picker-results { max-height:30dvh; }
   .dnd-picker-tray { border-left:0; border-top:1px solid var(--border-subtle); padding:var(--space-2) 0; }
-  .dnd-builder-class-row { grid-template-columns:minmax(0,1fr) 4rem; }
+  .dnd-builder-class-row { grid-template-columns:minmax(0,1fr) 5rem; }
 }
 .dnd-equipment-path { display:flex; align-items:center; flex-wrap:wrap; gap:var(--space-2); color:var(--accent-gold); font-size:var(--text-sm); }
 .dnd-equipment-path button { border:0; background:transparent; color:inherit; padding:var(--space-1); }
@@ -160,3 +160,46 @@
 .dnd-spell-grant-choice { display:grid; gap:var(--space-2); border:1px solid var(--border-subtle); border-radius:var(--radius-sm); }
 .dnd-spell-grant-choice > button { text-align:left; color:var(--accent-gold); background:transparent; border:0; }
 .dnd-spell-grant-choice select { flex:1; }
+.dse-builder-summary { display:flex; flex-wrap:wrap; gap:var(--space-2); }
+.dse-builder-summary .codex-tile { display:grid; gap:var(--space-1); padding:var(--space-2) var(--space-3); }
+.dse-builder-shell { display:grid; grid-template-columns:minmax(15rem,19rem) minmax(0,1fr); gap:var(--space-4); align-items:start; }
+.dse-builder-without-guidance { grid-template-columns:1fr; }
+.dse-builder-main { min-width:0; display:flex; flex-direction:column; gap:var(--space-4); }
+.dse-build-rail { position:sticky; top:var(--space-3); overflow:hidden; background:linear-gradient(155deg,var(--bg-surface),var(--bg-raised)); border:1px solid rgba(var(--accent-gold-rgb),.32); border-radius:var(--radius-lg); box-shadow:var(--shadow-sm); }
+.dse-build-progress-head { display:grid; gap:var(--space-2); padding:var(--space-4); border-bottom:1px solid var(--border-subtle); cursor:pointer; list-style:none; }
+.dse-build-progress-head::-webkit-details-marker { display:none; }
+.dse-build-progress-head h3 { color:var(--text-parchment); font-size:var(--text-xl); line-height:1.15; }
+.dse-build-progress-head > strong { color:var(--text-light); font-size:var(--text-sm); }
+.dse-build-meter { appearance:none; width:100%; height:.45rem; overflow:hidden; background:var(--bg-base); border:1px solid var(--border-subtle); border-radius:var(--radius-pill); }
+.dse-build-meter::-webkit-progress-bar { background:var(--bg-base); }
+.dse-build-meter::-webkit-progress-value { background:linear-gradient(90deg,var(--accent-gold),var(--text-parchment)); }
+.dse-build-meter::-moz-progress-bar { background:linear-gradient(90deg,var(--accent-gold),var(--text-parchment)); }
+.dse-build-step { padding:var(--space-3) var(--space-4); border-bottom:1px solid var(--border-subtle); }
+.dse-build-step:last-child { border-bottom:0; }
+.dse-build-step-head { display:flex; align-items:center; justify-content:space-between; gap:var(--space-2); color:var(--text-muted); font-size:var(--text-xs); }
+.dse-build-step-head strong { color:var(--text-light); font-size:var(--text-sm); }
+.dse-build-step > button { min-height:44px; width:100%; margin-top:var(--space-1); padding:var(--space-2); color:var(--text-light); background:rgba(var(--accent-gold-rgb),.06); border:1px solid transparent; border-radius:var(--radius-sm); font-size:var(--text-sm); text-align:left; }
+.dse-build-step > button:hover { color:var(--text-parchment); background:rgba(var(--accent-gold-rgb),.12); border-color:rgba(var(--accent-gold-rgb),.28); }
+.dnd-builder-tabs { overflow:auto; }
+.dnd-builder-tabs > button { flex-shrink:0; }
+.dnd-builder-progression { display:grid; gap:var(--space-3); }
+.dse-build-level { border-left:2px solid var(--border-subtle); padding-left:var(--space-3); }
+.dse-build-level-head { display:flex; align-items:baseline; flex-wrap:wrap; gap:var(--space-2); padding:var(--space-2) 0; cursor:pointer; }
+.dse-build-level-head > strong { color:var(--accent-gold); white-space:nowrap; }
+.dse-build-level-head > span { font-size:var(--text-sm); }
+.dse-build-pending { color:var(--accent-gold); }
+.dse-build-level .dnd-builder-choices { padding-top:var(--space-2); }
+.dnd-builder-feature { font-size:var(--text-sm); color:var(--text-muted); }
+.dnd-builder-feature p { white-space:pre-line; padding:var(--space-2); }
+.dnd-extra-feats, .dnd-extra-feat-form { display:grid; gap:var(--space-2); }
+.dnd-extra-feat { display:flex; flex-wrap:wrap; align-items:center; gap:var(--space-2); }
+.dnd-extra-feat > strong { flex:1; min-width:8rem; }
+@media (max-width:1100px) {
+  .dse-builder-shell { grid-template-columns:1fr; }
+  .dse-build-rail { position:static; }
+}
+@media (max-width:768px) {
+  .dse-build-progress-head { padding:var(--space-3); }
+  .dse-build-progress-head > .dse-stat-label, .dse-build-progress-head h3 { display:none; }
+  .dse-build-step.is-complete { display:none; }
+}

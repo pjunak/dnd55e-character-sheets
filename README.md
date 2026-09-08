@@ -18,6 +18,8 @@ lore, relationships, routing, and authorization.
 - An optional guided Builder through `dnd5e.rules-engine` v3.
 - Builder species/lineage, background, base scores, subclass selection and
   split ability grants, with point-buy and choice counts.
+- The original Builder progress rail, Character/class tabs and level rows,
+  with actionable reminders, labeled advanced choices and extra feats/rewards.
 - A searchable equipment folder tree with breadcrumbs, a quantity tray and
   one batch save; custom items also work without a provider. Worn slots equip,
   replace and remove armor/shields, and manage attunement from the backpack.
@@ -56,6 +58,7 @@ those values as well.
 - `src/workflow-view.ts` owns Builder foundation fields, equipment selection,
   spell management and rest previews.
 - `src/spell-tools.ts` renders grant choices, casting, copying and swap reviews.
+- `src/builder-view.ts` renders progress, class navigation and extra rewards.
 - `src/equipment-state.ts` manages worn-slot placement using catalog snapshots.
 - `src/sheet-editor.ts` owns draft retention and save sequencing.
 - `src/sheet-state.ts` owns defaults, forward normalization, and manual math.
