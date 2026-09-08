@@ -19,6 +19,11 @@ test("engine client sends contract-owned v3 requests", async () => {
   assert.equal(calls[0].params.contractVersion, "rules-engine-builder-plan.v1");
   assert.equal(calls[0].deadlineMs, 15000);
   assert.equal(client.providerLabel, "dnd-engine");
+  await client.playChange(blankSheet(), { operation: 'rest', rest: 'long' });
+  assert.equal(calls[1].method, 'apply-play-change');
+  assert.equal(calls[1].params.contractVersion, 'rules-engine-play-change.v1');
+  assert.deepEqual(calls[1].params.change, { operation: 'rest', rest: 'long' });
+  assert.equal(calls[1].deadlineMs, 15000);
 });
 
 test("materialization updates durable fallback fields while preserving play state", () => {
@@ -55,6 +60,13 @@ test("catalog queries unwrap public record envelopes and keep stable identities"
     assert.equal(params.cursor, 'next'); return { records: [{ id: 'wizard', kind: 'class', value: { name: 'Wizard' } }] };
   } }, new AbortController().signal);
   assert.deepEqual(await client.queryAll('class'), [{ id: 'fighter', kind: 'class', name: 'Fighter', hitDie: 'd10' }, { id: 'wizard', kind: 'class', name: 'Wizard' }]);
+});
+
+test('materialized play changes honor retained HP and combat overrides', () => {
+  const sheet = blankSheet(); sheet.hp = 45; sheet.overrides = { maxHp: 50, ac: 19, initiative: -1, speed: 40 };
+  const result = materializeHydration(sheet, { identity: { edition: '2024' }, warnings: [], sheet: { derived: { maxHp: 32, armorClass: 12, initiative: 2, speed: 30 } } });
+  assert.equal(result.hp, 45); assert.equal(result.maxHp, 50); assert.equal(result.ac, 19); assert.equal(result.initiative, -1); assert.equal(result.speed, 40);
+  assert.deepEqual(result.overrides, sheet.overrides);
 });
 
 test("recalculation retains base scores, combat snapshots and authored spell metadata", () => {

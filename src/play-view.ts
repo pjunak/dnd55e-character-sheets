@@ -7,6 +7,7 @@ export interface PlayView {
   readonly editable: boolean;
   readonly layout: Layout;
   readonly save: (change: (draft: SheetState) => void) => void;
+  readonly addItem?: () => void;
 }
 const abilityNames: Record<Ability, string> = { STR: "Strength", DEX: "Dexterity", CON: "Constitution", INT: "Intelligence", WIS: "Wisdom", CHA: "Charisma" };
 const aliases: Record<string, string> = { "animal handling": "animalHandling", "sleight of hand": "sleightOfHand" };
@@ -111,7 +112,7 @@ export function backpack(view: PlayView): HTMLElement {
   const pack = el(document, "section", "dse-backpack");
   const heading = el(document, "div", "dse-bp-head");
   const title = el(document, "h3", "dse-bp-title"); title.append(icon(document, "M8 6V4a4 4 0 0 1 8 0v2M5 6h14v15H5ZM5 10h14M9 10v3h6v-3"), document.createTextNode("Backpack")); heading.append(title);
-  if (editable) heading.append(button(document, "＋ Add item", () => save(draft => { draft.inventory.push({ id: createId("item"), name: "New item", qty: 1, location: "pack", notes: "" }); })));
+  if (editable) heading.append(button(document, "＋ Add item", view.addItem ?? (() => save(draft => { draft.inventory.push({ id: createId("item"), name: "New item", qty: 1, location: "pack", notes: "" }); }))));
   pack.append(heading);
   const split = el(document, "div", "dse-bp-split");
   const active = el(document, "div", "dse-bp-col"), stored = el(document, "div", "dse-bp-col dse-bp-right");

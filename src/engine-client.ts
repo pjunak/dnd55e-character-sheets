@@ -14,6 +14,13 @@ export interface BuilderPlan extends Record<string, unknown> {
 }
 export interface BuilderPlanResult { readonly available: boolean; readonly status: string; readonly plan?: BuilderPlan; readonly identity?: EngineIdentity; readonly errors: readonly string[] }
 export interface RuleRecord extends Record<string, unknown> { readonly id: string; readonly kind: string; readonly name?: string }
+export type PlayChange =
+  | { readonly operation: "rest"; readonly rest: "short" | "long" }
+  | { readonly operation: "spend-hit-die"; readonly key: string }
+  | { readonly operation: "toggle-feature"; readonly key: string; readonly enabled: boolean }
+  | { readonly operation: "select-spell"; readonly classId: string; readonly ref: string; readonly selection: "cantrips" | "spellbook" | "preparedSpells"; readonly selected: boolean }
+  | { readonly operation: "cast-spell"; readonly classId: string; readonly ref: string; readonly slot: string };
+export interface PlayResult extends Hydration { readonly available: boolean; readonly status: string; readonly decisions: Record<string, unknown>; readonly errors: readonly string[] }
 
 export class RulesEngineClient {
   readonly #handle: ServiceHandle;
@@ -34,6 +41,10 @@ export class RulesEngineClient {
 
   hydrate(decisions: SheetState): Promise<Hydration> {
     return this.#handle.call("hydrate", { contractVersion: "rules-engine-hydrate.v1", decisions }, { deadlineMs: 15_000, signal: this.#signal });
+  }
+
+  playChange(decisions: SheetState, change: PlayChange): Promise<PlayResult> {
+    return this.#handle.call("apply-play-change", { contractVersion: "rules-engine-play-change.v1", decisions, change }, { deadlineMs: 15_000, signal: this.#signal });
   }
 
   builderPlan(decisions: SheetState): Promise<BuilderPlanResult> {
@@ -89,6 +100,10 @@ export function materializeHydration(
   copyNumber(derived, "initiative", next, "initiative");
   copyNumber(derived, "speed", next, "speed");
   copyNumber(derived, "proficiencyBonus", next, "profBonus");
+  for (const field of ["maxHp", "ac", "initiative", "speed"] as const) {
+    const override = next.overrides[field];
+    if (finite(override)) next[field] = field === "initiative" ? Number(override) : Math.max(0, Number(override));
+  }
   if (finite(computed["totalLevel"])) next.level = Math.max(1, Number(computed["totalLevel"]));
   next.hp = Math.min(next.hp, next.maxHp);
   materializeProficiencies(asRecord(computed["saves"]), next.saveProf, "proficient");

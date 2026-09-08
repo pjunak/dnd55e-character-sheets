@@ -57,6 +57,23 @@ identity. The package does not automatically recompute merely because a page
 rendered or a provider changed. A user explicitly loads the Builder or requests
 a refresh, keeping changes reviewable.
 
+## Play actions and equipment
+
+`apply-play-change` returns decisions and hydration from the same rules-data
+evaluation. Sheets saves them in one optimistic extension write. Rest and
+average hit-die healing show a detached preview before confirmation; cancellation
+does not write. Class spell selection validates list membership, level, preparation
+limits and spellbook membership in the engine. Slot casting rejects unavailable
+or undersized slots. Feature toggles use engine availability/exclusivity, and
+rest recovery leaves manual resources untouched. Saved HP/AC/initiative/speed
+overrides remain effective during materialization.
+
+Equipment selections keep provider kind/ref, readable names and a record
+snapshot alongside authored quantity, location and notes. The tray commits all
+items in one write, retains the host's dirty guard while staged, and supports
+custom entries when catalog calls fail. A failed commit leaves the resulting
+sheet draft available for the ordinary Retry/export flow.
+
 ## Legacy campaign data
 
 There is no permanent legacy-save subsystem. During supervised cutover, the

@@ -17,6 +17,9 @@ export class RulesEngineClient {
     hydrate(decisions) {
         return this.#handle.call("hydrate", { contractVersion: "rules-engine-hydrate.v1", decisions }, { deadlineMs: 15_000, signal: this.#signal });
     }
+    playChange(decisions, change) {
+        return this.#handle.call("apply-play-change", { contractVersion: "rules-engine-play-change.v1", decisions, change }, { deadlineMs: 15_000, signal: this.#signal });
+    }
     builderPlan(decisions) {
         return this.#handle.call("builder-plan", { contractVersion: "rules-engine-builder-plan.v1", decisions }, { deadlineMs: 15_000, signal: this.#signal });
     }
@@ -64,6 +67,11 @@ export function materializeHydration(current, hydration, engineIdentity = {}) {
     copyNumber(derived, "initiative", next, "initiative");
     copyNumber(derived, "speed", next, "speed");
     copyNumber(derived, "proficiencyBonus", next, "profBonus");
+    for (const field of ["maxHp", "ac", "initiative", "speed"]) {
+        const override = next.overrides[field];
+        if (finite(override))
+            next[field] = field === "initiative" ? Number(override) : Math.max(0, Number(override));
+    }
     if (finite(computed["totalLevel"]))
         next.level = Math.max(1, Number(computed["totalLevel"]));
     next.hp = Math.min(next.hp, next.maxHp);

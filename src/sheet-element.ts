@@ -1,4 +1,4 @@
-import { applyDecisions, materializeHydration, type BuilderChoice, type BuilderPlan, type Hydration, type RuleRecord } from "./engine-client.js";
+import { applyDecisions, materializeHydration, type BuilderChoice, type BuilderPlan, type Hydration, type PlayChange, type RuleRecord } from "./engine-client.js";
 import { runtimeFor, type SheetRuntime } from "./runtime.js";
 import type { ContributionContext } from "./sdk.js";
 import { parseSheet, serializeSheet } from "./sheet-transfer.js";
@@ -6,6 +6,7 @@ import { abilities, cloneSheet, createId, type ResourceItem, type SheetState, ty
 import type { SheetSnapshot } from "./sheet-repository.js";
 import { SheetEditor } from "./sheet-editor.js";
 import { abilityRail, backpack, combatDetails, el, preferredLayout, vitals, type Layout, type PlayView } from "./play-view.js";
+import { equipmentKinds, equipmentPicker, foundationEditor, playReview, restControls, spellBrowser, type SpellBrowserState } from "./workflow-view.js";
 
 type Tab = "sheet" | "combat" | "spells" | "builder" | "notes" | "tools";
 const tabs: readonly (readonly [Tab, string])[] = [["sheet", "Character Sheet"], ["combat", "Combat"], ["spells", "Spellbook"], ["notes", "Notes"], ["builder", "Builder"], ["tools", "Settings"]];
@@ -34,6 +35,13 @@ export function defineSheetElement(generation: string): string {
     #builderPlan: BuilderPlan | undefined;
     #classRecords: readonly RuleRecord[] = [];
     #featRecords: readonly RuleRecord[] = [];
+    #speciesRecords: readonly RuleRecord[] = [];
+    #backgroundRecords: readonly RuleRecord[] = [];
+    #subclassRecords: readonly RuleRecord[] = [];
+    #spellRecords: readonly RuleRecord[] | undefined;
+    #spellBrowser: SpellBrowserState = { classId: "", query: "", level: "" };
+    #dialog: HTMLDialogElement | undefined;
+    #dialogDirty = false;
 
     set codexContribution(value: ContributionContext) {
       const previous = this.#contribution;
@@ -51,7 +59,7 @@ export function defineSheetElement(generation: string): string {
         this.#changingControl = true;
         setTimeout(() => { this.#changingControl = false; if (this.isConnected && this.#deferredRender) this.#render(true); }, 0);
       }, true);
-      this.addEventListener("input", event => { if (this.#canEdit() && event.target instanceof HTMLElement && !event.target.closest(".dnd-builder-choices, .dnd-builder-classes") && event.target.getAttribute("aria-label") !== "Sheet layout") { this.#typing = true; this.#publishEdits(); } });
+      this.addEventListener("input", event => { if (this.#canEdit() && event.target instanceof HTMLElement && !event.target.closest(".dnd-builder-choices, .dnd-builder-classes, .dnd-spell-browser") && event.target.getAttribute("aria-label") !== "Sheet layout") { this.#typing = true; this.#publishEdits(); } });
       // Focus settles after blur/change. Replacing controls inside focusout can cancel the pending click.
       this.addEventListener("focusout", () => { setTimeout(() => { if (this.isConnected && this.#deferredRender && !this.contains(this.ownerDocument.activeElement)) this.#render(); }, 0); });
     }
@@ -62,6 +70,7 @@ export function defineSheetElement(generation: string): string {
       void this.#connect();
     }
     disconnectedCallback(): void {
+      this.#closeDialog();
       this.#epoch++; this.#editor?.dispose(); this.#runtime = undefined; this.#pointerDown = false;
       this.ownerDocument.removeEventListener("pointerup", this.#releasePointer);
       this.ownerDocument.removeEventListener("pointercancel", this.#releasePointer);
@@ -72,6 +81,7 @@ export function defineSheetElement(generation: string): string {
     };
 
     async #connect(): Promise<void> {
+      this.#closeDialog();
       const epoch = ++this.#epoch;
       this.#editor?.dispose(); this.#editor = undefined; this.#typing = false;
       const contribution = this.#contribution;
@@ -88,6 +98,7 @@ export function defineSheetElement(generation: string): string {
       try { this.#layout = preferredLayout(this.ownerDocument.defaultView?.localStorage, contribution.host.key); } catch { this.#layout = "compact"; }
       this.#hydration = undefined;
       this.#builderPlan = undefined;
+      this.#spellRecords = undefined;
       this.#message = "";
       this.#busy = true;
       this.#render();
@@ -153,7 +164,7 @@ export function defineSheetElement(generation: string): string {
       this.#updateStatus();
     }
 
-    #publishEdits(): void { this.#contribution?.edits.set({ dirty: this.#typing || this.#editor?.dirty === true, saving: this.#editor?.saving === true || this.#busy }); }
+    #publishEdits(): void { this.#contribution?.edits.set({ dirty: this.#typing || this.#dialogDirty || this.#editor?.dirty === true, saving: this.#editor?.saving === true || this.#busy }); }
     #updateStatus(): void {
       const area = this.querySelector(".dnd-save-status"); if (area === null) return;
       const editor = this.#editor;
@@ -189,7 +200,7 @@ export function defineSheetElement(generation: string): string {
       return navigation;
     }
 
-    #view(state: SheetState): PlayView { return { document: this.ownerDocument, state, layout: this.#layout, editable: this.#canEdit(), save: change => { void this.#save(change); } }; }
+    #view(state: SheetState): PlayView { return { document: this.ownerDocument, state, layout: this.#layout, editable: this.#canEdit(), save: change => { void this.#save(change); }, addItem: () => void this.#openEquipment() }; }
 
     #renderSheet(panel: HTMLElement, state: SheetState): void {
       const view = this.#view(state), columns = el(panel.ownerDocument, "div", "dse-cols"), main = el(panel.ownerDocument, "div", "dse-cols-main");
@@ -198,14 +209,19 @@ export function defineSheetElement(generation: string): string {
 
     #renderCombat(panel: HTMLElement, state: SheetState): void {
       const view = this.#view(state), columns = el(panel.ownerDocument, "div", "dse-cols"), main = el(panel.ownerDocument, "div", "dse-cols-main");
-      main.append(vitals(view), combatDetails(view)); columns.append(abilityRail(view), main); panel.append(columns);
+      main.append(vitals(view), restControls(view, this.#runtime?.engine.available === true, (change, review) => void this.#play(change, review)), combatDetails(view)); columns.append(abilityRail(view), main); panel.append(columns);
     }
 
     #renderSpells(panel: HTMLElement, state: SheetState): void {
       const document = panel.ownerDocument;
       panel.append(vitals(this.#view(state)));
       const section = card(document, "Spellbook");
-      section.append(this.#spellTable(state.spells));
+      if (this.#runtime?.engine.available === true) {
+        if (this.#spellRecords === undefined) section.append(actionButton(document, "Manage class spells", () => void this.#loadSpells(), undefined, this.#busy));
+        else section.append(spellBrowser(this.#view(state), this.#spellRecords, this.#hydration?.sheet ?? asRecord(state.rulesProvider?.["materialized"]), this.#spellBrowser, change => void this.#play(change)));
+      }
+      const saved = document.createElement("details"); saved.className = "dnd-saved-spells";
+      saved.append(el(document, "summary", "", `Saved & custom spells · ${state.spells.length}`), this.#spellTable(state.spells)); section.append(saved);
       if (this.#canEdit()) section.append(actionButton(document, "Add spell", () => void this.#save((draft) => { draft.spells.push({ id: createId("spell"), name: "New spell", level: 0, school: "", prepared: false, origin: "manual" }); })));
       panel.append(section);
     }
@@ -216,11 +232,12 @@ export function defineSheetElement(generation: string): string {
       if (this.#runtime?.engine.available !== true) {
         section.append(messageBlock(document, "No compatible rules engine is selected. The rest of the sheet remains fully editable.", "status")); panel.append(section); return;
       }
-      const intro = document.createElement("p"); intro.textContent = "The engine validates rules choices. Changes are saved together with ordinary fallback values, so the sheet still works if the engine is later removed.";
+      const intro = document.createElement("p"); intro.textContent = "Build your character and review its choices here. Equipment, notes and resources stay with the sheet.";
       section.append(intro);
       if (this.#builderPlan === undefined) {
         section.append(actionButton(document, this.#busy ? "Loading…" : "Load builder", () => void this.#loadBuilder(), undefined, this.#busy)); panel.append(section); return;
       }
+      section.append(foundationEditor(this.#view(state), this.#builderPlan, this.#speciesRecords, this.#backgroundRecords, change => void this.#changeBuild(change)));
       const classes = document.createElement("div"); classes.className = "dnd-builder-classes";
       const heading = document.createElement("h4"); heading.textContent = "Classes"; classes.append(heading);
       const plannedClasses = this.#builderPlan.classes.length > 0 ? this.#builderPlan.classes : [{}];
@@ -295,13 +312,20 @@ export function defineSheetElement(generation: string): string {
       const document = this.ownerDocument;
       const row = document.createElement("div"); row.className = "dnd-builder-class-row";
       const select = document.createElement("select"); select.disabled = !this.#canEdit();
+      select.setAttribute("aria-label", `Class ${index + 1}`);
       select.append(option(document, "", "Choose class…"));
       for (const record of this.#classRecords) select.append(option(document, record.id, record.name ?? record.id));
       select.value = typeof selected["classId"] === "string" ? selected["classId"] : "";
       const level = numberInput(document, typeof selected["level"] === "number" ? selected["level"] : 1, !this.#canEdit(), 1, 20);
-      const update = (): void => { const classes = this.#builderPlan?.classes.map((item) => ({ ...item })) ?? []; classes[index] = { ...classes[index], classId: select.value, level: numberValue(level, 1), subclass: typeof classes[index]?.["subclass"] === "string" ? classes[index]["subclass"] : "" }; void this.#changeClasses(classes); };
+      level.setAttribute("aria-label", `Class ${index + 1} level`);
+      const subclass = document.createElement("select"); subclass.disabled = !this.#canEdit(); subclass.setAttribute("aria-label", `Class ${index + 1} subclass`); subclass.append(option(document, "", "Choose subclass…"));
+      const available = this.#subclassRecords.filter(item => item["classId"] === selected["classId"]);
+      for (const item of available) subclass.append(option(document, item.id, item.name ?? item.id));
+      const savedSubclass = typeof selected["subclass"] === "string" ? selected["subclass"] : "";
+      if (savedSubclass && !available.some(item => item.id === savedSubclass)) subclass.append(option(document, savedSubclass, `${savedSubclass} (saved)`)); subclass.value = savedSubclass;
+      const update = (): void => { if (!level.reportValidity()) return; const classes = this.#builderPlan?.classes.map((item) => ({ ...item })) ?? []; classes[index] = { ...classes[index], classId: select.value, level: Math.trunc(numberValue(level, 1)), subclass: select.value === selected["classId"] ? subclass.value : "" }; void this.#changeClasses(classes); };
       select.addEventListener("change", update); level.addEventListener("change", update);
-      row.append(select, level);
+      subclass.addEventListener("change", update); row.append(select, level, subclass);
       if (this.#canEdit()) row.append(actionButton(document, "Remove", () => { const classes = (this.#builderPlan?.classes ?? []).filter((_, candidate) => candidate !== index); void this.#changeClasses(classes.length > 0 ? classes : [{ classId: "", level: 1, subclass: "" }]); }, "danger"));
       return row;
     }
@@ -309,12 +333,9 @@ export function defineSheetElement(generation: string): string {
     #choiceEditor(choice: BuilderChoice, state: SheetState): HTMLElement {
       const document = this.ownerDocument;
       const item = document.createElement("fieldset");
-      const legend = document.createElement("legend"); legend.textContent = choice.prompt ?? titleCase(choice.id.replaceAll(/[-_:]/g, " ")); item.append(legend);
+      const legend = document.createElement("legend"); legend.textContent = choice.prompt ?? (choice.kind === "abilityBudget" ? "Origin ability scores" : choice.kind === "asiMode" ? `${titleCase(String(choice["classId"] ?? "Class"))} level ${String(choice["level"])} advancement` : titleCase(choice.id.replaceAll(/[-_:]/g, " "))); item.append(legend);
       if (choice.kind === "abilityBudget") {
-        const eligible = Array.isArray(choice["eligible"]) ? choice["eligible"].filter((value): value is string => typeof value === "string") : [...abilities];
-        const ability = document.createElement("select"); for (const value of eligible) ability.append(option(document, value, value));
-        const amount = numberInput(document, 1, !this.#canEdit(), 0, Number(choice["perAbilityMax"] ?? choice["budget"] ?? 2));
-        item.append(ability, amount, actionButton(document, "Apply", () => void this.#applyBuilderChoice(choice.id, { ability: ability.value, amount: numberValue(amount, 0) }), "primary", !this.#canEdit() || this.#busy));
+        item.append(this.#abilityChoiceEditor(choice));
         return item;
       }
       if (choice.kind === "asiMode") {
@@ -330,20 +351,28 @@ export function defineSheetElement(generation: string): string {
         const feat = asRecord(choice["feat"]);
         if (selectedMode === "feat" && typeof feat["id"] === "string") {
           const featSelect = document.createElement("select"); featSelect.disabled = !this.#canEdit(); featSelect.append(option(document, "", "Choose feat…"));
-          for (const record of this.#featRecords) featSelect.append(option(document, record.id, record.name ?? record.id));
+          for (const record of this.#featRecords.filter(record => !Array.isArray(feat["categories"]) || feat["categories"].includes(record["category"]))) featSelect.append(option(document, record.id, record.name ?? record.id));
           const selectedFeat = state.featureChoices[feat["id"]]; if (typeof selectedFeat === "string") featSelect.value = selectedFeat;
           featSelect.addEventListener("change", () => void this.#applyBuilderChoice(feat["id"] as string, featSelect.value));
           item.append(featSelect);
+          const featAbility = asRecord(feat["ability"]);
+          if (Array.isArray(featAbility["eligible"]) && featAbility["eligible"].length > 0) item.append(this.#abilityChoiceEditor(featAbility));
         }
         return item;
       }
       const count = Math.max(1, Number(choice.count ?? 1));
+      const selectedValues = Array.from({ length: count }, (_, slot) => state.featureChoices[count > 1 ? `${choice.id}#${slot}` : choice.id] ?? (slot === 0 ? choice["default"] : undefined)).filter(value => typeof value === "string" && value.length > 0);
+      item.append(el(document, "p", "dnd-builder-progress", `${new Set(selectedValues).size} / ${count} selected`));
       for (let slot = 0; slot < count; slot += 1) {
         const select = document.createElement("select"); select.disabled = !this.#canEdit();
+        select.setAttribute("aria-label", `${legend.textContent} ${slot + 1}`);
         select.append(option(document, "", "Choose…"));
         for (const value of this.#choiceOptions(choice)) select.append(option(document, value.id, value.label));
         const key = count > 1 ? `${choice.id}#${slot}` : choice.id;
-        const current = state.featureChoices[key]; if (typeof current === "string") select.value = current;
+        const current = state.featureChoices[key] ?? (slot === 0 ? choice["default"] : undefined);
+        if (typeof current === "string") {
+          if (![...select.options].some(option => option.value === current)) select.append(option(document, current, `${titleCase(current)} (saved)`)); select.value = current;
+        }
         const choiceSlot = slot;
         select.addEventListener("change", () => void this.#applyBuilderChoice(choice.id, select.value, choiceSlot));
         item.append(select);
@@ -353,16 +382,22 @@ export function defineSheetElement(generation: string): string {
 
     #choiceOptions(choice: BuilderChoice): readonly { readonly id: string; readonly label: string }[] {
       if (Array.isArray(choice.from)) return choice.from.map((id) => ({ id, label: titleCase(id) }));
-      if (choice.kind === "feat") return this.#featRecords.map((record) => ({ id: record.id, label: record.name ?? record.id }));
+      if (choice.kind === "feat") return this.#featRecords.filter(record => !choice["category"] || choice["category"] === record["category"]).map((record) => ({ id: record.id, label: record.name ?? record.id }));
+      if (choice.kind === "expertise") return Object.entries(this.#snapshot?.state.skillProf ?? {}).filter(([, value]) => value).map(([id]) => ({ id, label: titleCase(id) }));
       return [];
     }
 
     #abilityChoiceEditor(descriptor: Record<string, unknown>): HTMLElement {
-      const document = this.ownerDocument; const wrapper = document.createElement("span"); wrapper.className = "dnd-builder-ability";
+      const document = this.ownerDocument; const wrapper = document.createElement("div"); wrapper.className = "dnd-builder-ability";
       const eligible = Array.isArray(descriptor["eligible"]) ? descriptor["eligible"].filter((value): value is string => typeof value === "string") : [...abilities];
-      const ability = document.createElement("select"); for (const value of eligible) ability.append(option(document, value, value));
-      const amount = numberInput(document, 1, !this.#canEdit(), 0, Number(descriptor["perAbilityMax"] ?? descriptor["budget"] ?? 2));
-      wrapper.append(ability, amount, actionButton(document, "Apply ability", () => void this.#applyBuilderChoice(descriptor["id"] as string, { ability: ability.value, amount: numberValue(amount, 0) }), "primary", !this.#canEdit() || this.#busy));
+      const assigned = asRecord(this.#snapshot?.state.abilityGrants.find(item => item["id"] === descriptor["id"])?.["assign"]);
+      wrapper.append(el(document, "p", "dnd-builder-progress", `${Object.values(assigned).reduce<number>((sum, value) => sum + Number(value || 0), 0)} / ${String(descriptor["budget"] ?? 0)} ability points assigned`));
+      for (const ability of eligible) {
+        const field = fieldWrapper(document, ability);
+        const amount = numberInput(document, Number(assigned[ability] ?? 0), !this.#canEdit(), 0, Number(descriptor["perAbilityMax"] ?? descriptor["budget"] ?? 2));
+        amount.setAttribute("aria-label", `${String(descriptor["id"])} ${ability}`);
+        amount.addEventListener("change", () => { if (amount.reportValidity()) void this.#applyBuilderChoice(String(descriptor["id"]), { ability, amount: numberValue(amount, 0) }); }); field.append(amount); wrapper.append(field);
+      }
       return wrapper;
     }
 
@@ -414,19 +449,24 @@ export function defineSheetElement(generation: string): string {
       const runtime = this.#runtime; const snapshot = this.#snapshot; if (runtime === undefined || snapshot === undefined || this.#busy || this.#editor?.dirty) return;
       const epoch = this.#epoch; this.#busy = true; this.#message = "Loading builder…"; this.#render();
       try {
-        const [result, classes, feats] = await Promise.all([runtime.engine.builderPlan(snapshot.state), runtime.engine.queryAll("class"), runtime.engine.queryAll("feat")]);
+        const [result, classes, feats, species, backgrounds, subclasses] = await Promise.all([runtime.engine.builderPlan(snapshot.state), runtime.engine.queryAll("class"), runtime.engine.queryAll("feat"), runtime.engine.queryAll("species"), runtime.engine.queryAll("background"), runtime.engine.queryAll("subclass")]);
         if (epoch !== this.#epoch) return;
         if (!result.available || result.plan === undefined) throw new Error(result.errors.join(" ") || "The rules data needed by the builder is unavailable.");
         this.#builderPlan = result.plan; this.#classRecords = classes; this.#featRecords = feats; this.#message = "";
+        this.#speciesRecords = species; this.#backgroundRecords = backgrounds; this.#subclassRecords = subclasses;
       } catch (error) { if (epoch === this.#epoch) this.#fail(error, "Could not load the builder."); }
       finally { if (epoch === this.#epoch) { this.#busy = false; this.#render(); } }
     }
 
     async #changeClasses(classes: readonly Record<string, unknown>[]): Promise<void> {
+      return this.#changeBuild(changed => { changed.classes = classes.map(item => structuredClone(item)); });
+    }
+
+    async #changeBuild(change: (draft: SheetState) => void): Promise<void> {
       const runtime = this.#runtime; const snapshot = this.#snapshot; if (runtime === undefined || snapshot === undefined || !this.#canEdit() || this.#busy || this.#editor?.dirty) return;
       const epoch = this.#epoch; this.#busy = true; this.#render();
       try {
-        const changed = cloneSheet(snapshot.state); changed.classes = classes.map((item) => structuredClone(item));
+        const changed = cloneSheet(snapshot.state); change(changed);
         const reconciled = await runtime.engine.reconcile(changed);
         if (epoch !== this.#epoch) return;
         if (!reconciled.available) throw new Error(reconciled.errors.join(" ") || "The engine could not reconcile this build.");
@@ -439,7 +479,7 @@ export function defineSheetElement(generation: string): string {
         const plan = await runtime.engine.builderPlan(materialized).catch(() => undefined);
         if (epoch !== this.#epoch) return; this.#builderPlan = plan?.plan;
         this.#hydration = hydration; this.#message = "Build updated and fallback values saved."; this.#messageKind = "status";
-      } catch (error) { if (epoch === this.#epoch) this.#fail(error, "Could not update the classes."); }
+      } catch (error) { if (epoch === this.#epoch) this.#fail(error, "Could not update the build."); }
       finally { if (epoch === this.#epoch) { this.#busy = false; this.#render(); } }
     }
 
@@ -472,6 +512,83 @@ export function defineSheetElement(generation: string): string {
       finally { if (epoch === this.#epoch) { this.#busy = false; this.#render(); } }
     }
 
+    #closeDialog(): void {
+      const dialog = this.#dialog;
+      dialog?.close(); dialog?.remove(); this.#dialog = undefined; this.#dialogDirty = false; this.#publishEdits();
+      if (dialog && this.isConnected) this.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')?.focus({ preventScroll: true });
+    }
+
+    #showDialog(title: string, content: HTMLElement): void {
+      this.#closeDialog();
+      const document = this.ownerDocument, dialog = document.createElement("dialog");
+      dialog.className = "addon-dnd-sheets dnd-workflow-dialog"; dialog.setAttribute("aria-label", title);
+      const heading = el(document, "div", "dnd-workflow-controls"); heading.append(el(document, "h3", "", title), actionButton(document, "Cancel", () => this.#closeDialog()));
+      dialog.append(heading, content); dialog.addEventListener("cancel", event => { event.preventDefault(); this.#closeDialog(); });
+      this.#dialog = dialog; document.body.append(dialog); dialog.showModal();
+    }
+
+    async #openEquipment(): Promise<void> {
+      if (!this.#canEdit() || this.#busy || this.#editor?.dirty) return;
+      const epoch = this.#epoch, engine = this.#runtime?.engine;
+      this.#busy = true; this.#render();
+      try {
+        const catalog: RuleRecord[] = []; let unavailable = engine?.available !== true;
+        if (engine?.available) {
+          const results = await Promise.allSettled(equipmentKinds.map(kind => engine.queryAll(kind)));
+          for (const result of results) { if (result.status === "fulfilled") catalog.push(...result.value); else unavailable = true; }
+        }
+        if (epoch !== this.#epoch) return;
+        const picker = equipmentPicker(this.ownerDocument, catalog, unavailable, dirty => { this.#dialogDirty = dirty; this.#publishEdits(); }, items => {
+          this.#closeDialog();
+          void this.#save(draft => { draft.inventory.push(...items); });
+        });
+        this.#showDialog("Add equipment", picker);
+      } catch (error) { if (epoch === this.#epoch) this.#fail(error, "Could not open equipment."); }
+      finally { if (epoch === this.#epoch) { this.#busy = false; this.#render(); } }
+    }
+
+    async #loadSpells(): Promise<void> {
+      const runtime = this.#runtime, snapshot = this.#snapshot;
+      if (!runtime || !snapshot || this.#busy || this.#editor?.dirty) return;
+      const epoch = this.#epoch; this.#busy = true; this.#render();
+      try {
+        const [catalog, hydration] = await Promise.all([runtime.engine.queryAll("spell"), runtime.engine.hydrate(snapshot.state)]);
+        if (epoch !== this.#epoch) return;
+        if (!hydration.identity) throw new Error(hydration.warnings.join(" ") || "The spell catalog is unavailable.");
+        this.#spellRecords = catalog; this.#hydration = hydration;
+      } catch (error) { if (epoch === this.#epoch) this.#fail(error, "Could not load spells."); }
+      finally { if (epoch === this.#epoch) { this.#busy = false; this.#render(); } }
+    }
+
+    async #play(change: PlayChange, review = false): Promise<void> {
+      const runtime = this.#runtime, snapshot = this.#snapshot;
+      if (!runtime || !snapshot || !this.#canEdit() || this.#busy || this.#editor?.dirty) return;
+      const epoch = this.#epoch; this.#busy = true; this.#render();
+      try {
+        const result = await runtime.engine.playChange(snapshot.state, change);
+        if (epoch !== this.#epoch) return;
+        if (!result.available || !result.identity) throw new Error(result.errors.join(" ") || "The rules data for this action is unavailable.");
+        const next = materializeHydration(applyDecisions(snapshot.state, result.decisions), result, runtime.engine.providerIdentity);
+        // Keep human-readable spell snapshots when the catalog is later removed.
+        for (const spell of next.spells) {
+          if (spell.origin !== "snapshot") continue;
+          const source = this.#spellRecords?.find(item => `snapshot:${item.id}` === spell.id);
+          if (source && spell.name === source.id) { spell.name = source.name ?? source.id; spell.level = Number(source["level"] ?? 0); spell.school = String(source["school"] ?? ""); }
+        }
+        const commit = async (): Promise<void> => {
+          if (epoch !== this.#epoch || this.#snapshot?.revision !== snapshot.revision || this.#editor?.dirty) return;
+          this.#closeDialog();
+          if (await this.#save(draft => replaceState(draft, next))) { this.#hydration = result; this.#message = change.operation === "cast-spell" ? "Spell cast. Resources saved." : "Changes saved."; this.#messageKind = "status"; this.#render(); }
+        };
+        if (review) {
+          const content = playReview(this.ownerDocument, snapshot.state, next);
+          content.append(actionButton(this.ownerDocument, "Apply changes", () => void commit(), "primary"));
+          this.#showDialog(change.operation === "rest" ? (change.rest === "long" ? "Review long rest" : "Review short rest") : "Review hit-die healing", content);
+        } else await commit();
+      } catch (error) { if (epoch === this.#epoch) this.#fail(error, "Could not apply this action."); }
+      finally { if (epoch === this.#epoch) { this.#busy = false; this.#render(); } }
+    }
+
     async #materialize(): Promise<void> {
       const runtime = this.#runtime; const snapshot = this.#snapshot; if (runtime === undefined || snapshot === undefined || !this.#canEdit() || this.#busy || this.#editor?.dirty) return;
       const epoch = this.#epoch; this.#busy = true; this.#render();
@@ -498,6 +615,7 @@ export function defineSheetElement(generation: string): string {
         const name = this.#classRecords.find((record) => record.id === classID)?.name ?? classID;
         return selected.length > 1 ? `${name} ${Number(item["level"] ?? 1)}` : name;
       }).join(" / ");
+      state.subclass = selected.map(item => this.#subclassRecords.find(record => record.id === item["subclass"])?.name ?? String(item["subclass"] ?? "")).filter(Boolean).join(" / ");
       return state;
     }
     #fail(error: unknown, fallback: string): void { this.#message = errorMessage(error, fallback); this.#messageKind = "alert"; }
