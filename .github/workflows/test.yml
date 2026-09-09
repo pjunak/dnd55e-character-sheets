@@ -4,7 +4,16 @@ name: Tests
 # through sibling checkouts, matching the local suite layout.
 on:
   push:
+    branches: [main]
   pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
@@ -27,6 +36,29 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 26
+          cache: npm
+          cache-dependency-path: addon-dnd-character-sheets/package-lock.json
 
-      - run: node --test tests/*.mjs
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: ttrpg-codex/go.mod
+          cache-dependency-path: ttrpg-codex/go.sum
+      - run: npm ci
         working-directory: addon-dnd-character-sheets
+      - run: npm run package
+        working-directory: addon-dnd-character-sheets
+      - run: npm test
+        working-directory: addon-dnd-character-sheets
+      - name: Verify committed browser output matches source
+        run: git diff --exit-code -- web
+        working-directory: addon-dnd-character-sheets
+      - name: Inspect release package with the host
+        run: go run ./cmd/codex-addon-inspect ../addon-dnd-character-sheets/dist/dnd-sheets-3.0.0.zip
+        working-directory: ttrpg-codex
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: reviewed-package
+          path: addon-dnd-character-sheets/dist/*.zip
+          if-no-files-found: error
+          retention-days: 14
